@@ -1,0 +1,483 @@
+<meta charset="utf-8">
+<title>Carreteras Neuronales</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Construye un mundo virtual en JavaScript puro y llénalo de coches autónomos que aprenden a conducir por tus carreteras.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: el mapa ocupa toda la pantalla; arriba la barra y el modo, a la derecha
+     un letrero verde de autopista con las cifras, abajo la consola de mando. */
+  :root {
+    --bg: #e4e8e1;
+    --panel: #f7f8f4;
+    --panel-glass: rgb(247 248 244 / 0.93);
+    --ink: #17201a;
+    --muted: #586359;
+    --line: rgb(23 32 26 / 0.14);
+    --shadow: 0 8px 28px rgb(10 20 14 / 0.16);
+    --sign: #0a6a3b;
+    --sign-ink: #ffffff;
+    --accent: #0a6a3b;
+    --on-accent: #ffffff;
+    --amber: #c98d00;
+    --danger: #b0341d;
+    --grass: #a6c283;
+    --grass-line: rgb(36 66 28 / 0.1);
+    --road: #686f69;
+    --edge: #f5f6f0;
+    --lane: #f5f6f0;
+    --node: #17201a;
+    --car: #2b69ae;
+    --leader: #f0ad0e;
+    --wreck: #4f5751;
+    --glass: rgb(16 26 36 / 0.62);
+    --f-display: "Overpass", "Highway Gothic", "Arial Narrow", system-ui, sans-serif;
+    --f-mono: "Overpass Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --gutter-l: max(16px, env(safe-area-inset-left, 0px));
+    --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c110e;
+      --panel: #151c18;
+      --panel-glass: rgb(21 28 24 / 0.9);
+      --ink: #e5ebe6;
+      --muted: #98a59c;
+      --line: rgb(229 235 230 / 0.14);
+      --shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+      --sign: #0b5c34;
+      --sign-ink: #f4f7f4;
+      --accent: #43c486;
+      --on-accent: #06130c;
+      --amber: #f2b42a;
+      --danger: #ef6b50;
+      --grass: #142019;
+      --grass-line: rgb(170 220 185 / 0.05);
+      --road: #2a302c;
+      --edge: #c4cec6;
+      --lane: #f2b42a;
+      --node: #e5ebe6;
+      --car: #5d9fe2;
+      --leader: #f6bd33;
+      --wreck: #48504b;
+      --glass: rgb(8 14 20 / 0.7);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c110e;
+    --panel: #151c18;
+    --panel-glass: rgb(21 28 24 / 0.9);
+    --ink: #e5ebe6;
+    --muted: #98a59c;
+    --line: rgb(229 235 230 / 0.14);
+    --shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+    --sign: #0b5c34;
+    --sign-ink: #f4f7f4;
+    --accent: #43c486;
+    --on-accent: #06130c;
+    --amber: #f2b42a;
+    --danger: #ef6b50;
+    --grass: #142019;
+    --grass-line: rgb(170 220 185 / 0.05);
+    --road: #2a302c;
+    --edge: #c4cec6;
+    --lane: #f2b42a;
+    --node: #e5ebe6;
+    --car: #5d9fe2;
+    --leader: #f6bd33;
+    --wreck: #48504b;
+    --glass: rgb(8 14 20 / 0.7);
+    color-scheme: dark;
+  }
+
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--f-display);
+    font-size: 14px;
+    overflow: hidden;
+  }
+  .app { position: relative; height: 100%; overflow: hidden; }
+  #world {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+    background: var(--grass);
+  }
+  .app[data-mode="edit"] #world { cursor: crosshair; }
+  .app[data-mode="edit"] .train-only,
+  .app[data-mode="train"] .edit-only { display: none !important; }
+
+  /* Capa de interfaz encima del mapa: solo sus tarjetas reciben toques. */
+  .hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    padding-left: var(--gutter-l);
+    padding-right: var(--gutter-r);
+    padding-block: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .hud > * { pointer-events: auto; }
+  .hud .spacer { flex: 1; pointer-events: none; }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px 6px 6px;
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    min-width: 0;
+  }
+  .shield {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 32px;
+    border-radius: 7px;
+    background: var(--sign);
+    color: var(--sign-ink);
+    outline: 1.5px solid var(--sign-ink);
+    outline-offset: -4px;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    flex: none;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .brand p { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
+
+  .modes {
+    display: inline-flex;
+    padding: 4px;
+    gap: 4px;
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+  .modes button {
+    font: 700 13px/1 var(--f-display);
+    letter-spacing: 0.02em;
+    padding: 10px 14px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .modes button[aria-selected="true"] { background: var(--sign); color: var(--sign-ink); }
+
+  .main {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    pointer-events: none;
+  }
+  .main > * { pointer-events: auto; }
+  .scale {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font: 600 11px var(--f-mono);
+    color: var(--ink);
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+  }
+  .scale-bar {
+    height: 6px;
+    border: 2px solid var(--ink);
+    border-top: 0;
+    width: 80px;
+  }
+  .side { display: flex; flex-direction: column; gap: 12px; width: 268px; max-width: 100%; }
+
+  /* Letrero de autopista: verde con filete blanco, como los paneles reales. */
+  .sign {
+    background: var(--sign);
+    color: var(--sign-ink);
+    border-radius: 12px;
+    outline: 2px solid var(--sign-ink);
+    outline-offset: -6px;
+    padding: 16px 18px 14px;
+    box-shadow: var(--shadow);
+    display: grid;
+    gap: 10px;
+  }
+  .sign-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .sign-head .k { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.85; }
+  .sign-head .gen { font-size: 30px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 0; }
+  .stat { display: grid; gap: 1px; min-width: 0; }
+  .stat dt { font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; opacity: 0.8; }
+  .stat dd { margin: 0; font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .spark-wrap { display: grid; gap: 4px; border-top: 1px solid rgb(255 255 255 / 0.25); padding-top: 8px; }
+  .spark-wrap span { font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; opacity: 0.8; }
+  #spark { width: 100%; height: 44px; display: block; }
+
+  .card {
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 12px 12px 10px;
+    display: grid;
+    gap: 6px;
+  }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .card-head strong { font-size: 13px; font-weight: 800; }
+  .legend { font: 400 11px var(--f-mono); color: var(--muted); }
+  .legend i { font-style: normal; font-weight: 600; }
+  .legend .pos { color: var(--accent); }
+  .legend .neg { color: var(--amber); }
+  #net { width: 100%; height: 170px; display: block; }
+
+  .dock {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+    pointer-events: none;
+  }
+  .dock > * { pointer-events: auto; }
+  .panel {
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn, .seg button {
+    font: 600 13px/1 var(--f-display);
+    padding: 10px 12px 8px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover, .seg button:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); min-width: 92px; }
+  .btn.danger { color: var(--danger); }
+  .btn.armed { background: var(--danger); border-color: var(--danger); color: var(--panel); }
+  .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; background: var(--panel); }
+  .seg button { border: 0; padding: 8px 11px 6px; border-radius: 7px; background: transparent; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .speed button { font-family: var(--f-mono); }
+  .hint { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; max-width: 62ch; }
+  .hint b { color: var(--ink); font-weight: 600; }
+
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; align-items: end; }
+  .field { display: grid; gap: 4px; }
+  .field label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; }
+  .field output { font-family: var(--f-mono); color: var(--muted); }
+  .field small { color: var(--muted); font-size: 11.5px; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    top: 76px;
+    transform: translate(-50%, -6px);
+    max-width: calc(100% - 32px);
+    background: var(--ink);
+    color: var(--bg);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 10px 16px 8px;
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .short { display: none; }
+
+  @media (max-width: 720px) {
+    .bar { flex-wrap: nowrap; }
+    .brand { padding: 5px 10px 5px 5px; gap: 8px; }
+    .brand p { display: none; }
+    .brand h1 { font-size: 14px; max-width: 7.5em; }
+    .shield { width: 34px; height: 30px; font-size: 12px; }
+    .modes { padding: 3px; gap: 3px; }
+    .modes button { padding: 9px 10px 7px; font-size: 12.5px; }
+    .long { display: none; }
+    .short { display: inline; }
+    .main { flex-direction: column; align-items: stretch; }
+    .scale { order: 2; align-self: flex-start; }
+    .side { width: auto; }
+    .sign { padding: 12px 14px 10px; outline-offset: -5px; gap: 6px; }
+    .sign-head .gen { font-size: 22px; }
+    .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 8px; }
+    .stat dt { font-size: 9.5px; letter-spacing: 0.06em; }
+    .stat dd { font-size: 15px; }
+    .stat.kmh, .spark-wrap { display: none; }
+    #net { height: 140px; }
+    .dock { justify-items: stretch; }
+    .btn, .seg button { padding: 9px 10px 7px; font-size: 12.5px; }
+    .toast { top: 150px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .toast { transition: none; }
+  }
+</style>
+
+<div class="app" id="app" data-mode="train">
+  <canvas id="world" aria-label="Mapa del mundo virtual con carreteras y coches"></canvas>
+
+  <div class="hud">
+    <header class="bar">
+      <div class="brand">
+        <span class="shield" aria-hidden="true">IA</span>
+        <div>
+          <h1>Carreteras Neuronales</h1>
+          <p>Coches autónomos que aprenden a conducir por tus calles</p>
+        </div>
+      </div>
+      <div class="modes" role="tablist" aria-label="Modo">
+        <button id="mode-edit" role="tab" aria-selected="false"><span class="long">Editar mapa</span><span class="short">Editar</span></button>
+        <button id="mode-train" role="tab" aria-selected="true">Entrenar</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="scale" aria-hidden="true">
+        <span id="scale-label">20 m</span>
+        <span class="scale-bar" id="scale-bar"></span>
+      </div>
+
+      <div class="side train-only">
+        <section class="sign" aria-label="Estadísticas del entrenamiento">
+          <div class="sign-head">
+            <span class="k">Generación</span>
+            <span class="gen" id="s-gen">1</span>
+          </div>
+          <dl class="stats">
+            <div class="stat"><dt>En pista</dt><dd id="s-alive">0/0</dd></div>
+            <div class="stat"><dt>Líder</dt><dd id="s-best">0 m</dd></div>
+            <div class="stat"><dt>Récord</dt><dd id="s-record">0 m</dd></div>
+            <div class="stat kmh"><dt>Velocidad</dt><dd id="s-kmh">0 km/h</dd></div>
+          </dl>
+          <div class="spark-wrap">
+            <span>Mejor de cada generación</span>
+            <canvas id="spark" aria-hidden="true"></canvas>
+          </div>
+        </section>
+
+        <section class="card" id="brain-card" aria-label="Red neuronal del coche líder">
+          <div class="card-head">
+            <strong>Cerebro del líder</strong>
+            <span class="legend"><i class="pos">+</i> / <i class="neg">−</i> pesos</span>
+          </div>
+          <canvas id="net" aria-hidden="true"></canvas>
+          <span class="legend">7 sensores → 6 neuronas → acelerar, girar, frenar</span>
+        </section>
+      </div>
+    </div>
+
+    <div class="dock">
+      <div class="panel train-only">
+        <div class="row">
+          <button class="btn primary" id="play">Pausa</button>
+          <div class="seg speed" role="group" aria-label="Velocidad de la simulación">
+            <button data-speed="1" aria-pressed="true">×1</button>
+            <button data-speed="2" aria-pressed="false">×2</button>
+            <button data-speed="4" aria-pressed="false">×4</button>
+            <button data-speed="8" aria-pressed="false">×8</button>
+          </div>
+          <button class="btn" id="next"><span class="long">Siguiente generación</span><span class="short">Siguiente</span></button>
+          <button class="btn" id="follow" aria-pressed="true"><span class="long">Seguir al líder</span><span class="short">Líder</span></button>
+          <button class="btn" id="toggle-brain" aria-pressed="true">Cerebro</button>
+          <button class="btn" id="toggle-settings" aria-expanded="false" aria-controls="settings">Ajustes</button>
+        </div>
+        <div class="settings" id="settings" hidden>
+          <div class="field">
+            <label for="count">Coches por generación <output id="count-out" for="count">120</output></label>
+            <input type="range" id="count" min="10" max="300" step="10" value="120">
+            <small>Se aplica en la siguiente generación.</small>
+          </div>
+          <div class="field">
+            <label for="mutation">Mutación <output id="mutation-out" for="mutation">15 %</output></label>
+            <input type="range" id="mutation" min="0" max="50" step="1" value="15">
+            <small>Cuánto cambian los hijos respecto al mejor cerebro.</small>
+          </div>
+          <div class="field">
+            <button class="btn danger" id="forget">Olvidar lo aprendido</button>
+            <small>Empieza otra vez con cerebros al azar.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel edit-only">
+        <div class="row">
+          <div class="seg" role="group" aria-label="Herramienta">
+            <button data-tool="add" aria-pressed="true">Trazar</button>
+            <button data-tool="erase" aria-pressed="false">Borrar</button>
+            <button data-tool="start" aria-pressed="false">Salida</button>
+          </div>
+          <button class="btn" id="finish" disabled><span class="long">Terminar tramo</span><span class="short">Terminar</span></button>
+          <button class="btn" id="sample"><span class="long">Mapa de ejemplo</span><span class="short">Ejemplo</span></button>
+          <button class="btn danger" id="clear">Vaciar</button>
+        </div>
+        <p class="hint" id="hint"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script src="js/math.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/world.js"></script>
+<script src="js/network.js"></script>
+<script src="js/car.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/app.js"></script>
