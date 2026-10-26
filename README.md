@@ -4,6 +4,8 @@ Un mundo virtual en JavaScript puro (sin librerías) donde dibujas carreteras y 
 población de coches autónomos aprende a conducir por ellas mediante una red neuronal
 y un algoritmo genético.
 
+**▶ Juega aquí: https://andres-dlt.github.io/carreteras-neuronales/**
+
 ## Cómo abrirlo
 
 Los scripts son clásicos (no módulos), así que basta con abrir `index.html` en el
