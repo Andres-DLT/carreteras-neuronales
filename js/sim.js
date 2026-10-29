@@ -4,10 +4,17 @@
 // a la siguiente generación, intacto en un coche y mutado en el resto.
 
 class Simulation {
-  constructor(world, { count = 120, mutation = 0.15, brain = null, record = 0, history = [], generation = 1 } = {}) {
+  constructor(
+    world,
+    { count = 120, mutation = 0.15, brain = null, record = 0, history = [], generation = 1, traffic = 6, lights = true } = {}
+  ) {
+    // Un cerebro guardado con otra cantidad de entradas (versiones anteriores) no sirve.
+    if (brain && brain.levels[0].inputs.length !== BRAIN_INPUTS) brain = null;
     this.world = world;
     this.count = count;
     this.mutation = mutation;
+    this.trafficCount = traffic; // coches de tráfico por generación
+    this.lights = lights; // semáforos en los cruces
     this.brain = brain; // mejor cerebro conocido
     this.record = record; // celdas exploradas por ese cerebro
     this.history = history; // mejor resultado de cada generación
@@ -39,6 +46,8 @@ class Simulation {
     this.leader = this.cars[0];
     this.alive = this.cars.length;
     this.frame = 0;
+    const needsTraffic = this.trafficCount > 0 || this.lights;
+    this.traffic = needsTraffic ? new Traffic(this.world, { count: this.trafficCount, lights: this.lights }) : null;
   }
 
   // Manda el terreno explorado; en empate gana quien sigue en marcha
@@ -51,8 +60,9 @@ class Simulation {
     let alive = 0;
     let leader = null;
     let leaderScore = -Infinity;
+    if (this.traffic) this.traffic.update();
     for (const car of this.cars) {
-      car.update(this.world.grid, this.scratch);
+      car.update(this.world.grid, this.scratch, this.traffic);
       if (!car.damaged) alive++;
       const score = Simulation.score(car);
       if (score > leaderScore) {

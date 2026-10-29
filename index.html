@@ -32,6 +32,24 @@
     --leader: #f0ad0e;
     --wreck: #4f5751;
     --glass: rgb(16 26 36 / 0.62);
+    --building: #e8e2d5;
+    --roof-1: #c4704c;
+    --roof-2: #7f8c97;
+    --roof-3: #d6c49c;
+    --roof-line: rgb(0 0 0 / 0.18);
+    --tree: #4c8638;
+    --tree-alt: #6a9a3e;
+    --tree-light: rgb(255 255 255 / 0.16);
+    --world-shadow: rgb(20 40 10 / 0.22);
+    --stop: #f5f6f0;
+    --sig-box: #1a1e1b;
+    --sig-red: #e0392b;
+    --sig-amber: #f2b02a;
+    --sig-green: #27b85c;
+    --traffic-1: #7b4fb3;
+    --traffic-2: #c9454f;
+    --traffic-3: #2f8a83;
+    --traffic-4: #55626e;
     --f-display: "Overpass", "Highway Gothic", "Arial Narrow", system-ui, sans-serif;
     --f-mono: "Overpass Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
     --gutter-l: max(16px, env(safe-area-inset-left, 0px));
@@ -62,6 +80,24 @@
       --leader: #f6bd33;
       --wreck: #48504b;
       --glass: rgb(8 14 20 / 0.7);
+      --building: #252a2c;
+      --roof-1: #3d302a;
+      --roof-2: #2b3339;
+      --roof-3: #36342b;
+      --roof-line: rgb(255 220 150 / 0.14);
+      --tree: #17301f;
+      --tree-alt: #1f3b22;
+      --tree-light: rgb(255 255 255 / 0.05);
+      --world-shadow: rgb(0 0 0 / 0.35);
+      --stop: #c4cec6;
+      --sig-box: #0a0c0b;
+      --sig-red: #ff4d3d;
+      --sig-amber: #ffc23d;
+      --sig-green: #3ee07a;
+      --traffic-1: #a07ad6;
+      --traffic-2: #e0636c;
+      --traffic-3: #4fb5ad;
+      --traffic-4: #8494a3;
       color-scheme: dark;
     }
   }
@@ -89,6 +125,24 @@
     --leader: #f6bd33;
     --wreck: #48504b;
     --glass: rgb(8 14 20 / 0.7);
+    --building: #252a2c;
+    --roof-1: #3d302a;
+    --roof-2: #2b3339;
+    --roof-3: #36342b;
+    --roof-line: rgb(255 220 150 / 0.14);
+    --tree: #17301f;
+    --tree-alt: #1f3b22;
+    --tree-light: rgb(255 255 255 / 0.05);
+    --world-shadow: rgb(0 0 0 / 0.35);
+    --stop: #c4cec6;
+    --sig-box: #0a0c0b;
+    --sig-red: #ff4d3d;
+    --sig-amber: #ffc23d;
+    --sig-green: #3ee07a;
+    --traffic-1: #a07ad6;
+    --traffic-2: #e0636c;
+    --traffic-3: #4fb5ad;
+    --traffic-4: #8494a3;
     color-scheme: dark;
   }
 
@@ -315,6 +369,41 @@
   .field output { font-family: var(--f-mono); color: var(--muted); }
   .field small { color: var(--muted); font-size: 11.5px; }
   input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .field .check { justify-content: flex-start; align-items: center; gap: 8px; cursor: pointer; }
+  input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Panel de mapas: guardar con nombre, abrir o borrar los guardados y plantillas. */
+  .maps { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .save-row { display: flex; gap: 8px; }
+  .save-row input {
+    flex: 1;
+    min-width: 0;
+    font: 400 14px var(--f-display);
+    padding: 9px 11px 7px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+  }
+  .save-row input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+  .map-group { display: grid; gap: 6px; }
+  .group-k { font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .map-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 30vh; overflow-y: auto; }
+  .map-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 6px 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+  }
+  .map-item .name { flex: 1; min-width: 0; display: grid; gap: 1px; }
+  .map-item .name strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-item .name span { font: 400 11px var(--f-mono); color: var(--muted); }
+  .map-item .btn { padding: 8px 10px 6px; font-size: 12px; }
+  .empty { margin: 0; font-size: 12.5px; color: var(--muted); }
 
   button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 
@@ -421,7 +510,7 @@
             <span class="legend"><i class="pos">+</i> / <i class="neg">−</i> pesos</span>
           </div>
           <canvas id="net" aria-hidden="true"></canvas>
-          <span class="legend">7 sensores → 6 neuronas → acelerar, girar, frenar</span>
+          <span class="legend">7 sensores + rojo + coche delante → 6 neuronas → acelerar, girar, frenar</span>
         </section>
       </div>
     </div>
@@ -453,6 +542,15 @@
             <small>Cuánto cambian los hijos respecto al mejor cerebro.</small>
           </div>
           <div class="field">
+            <label for="traffic">Tráfico <output id="traffic-out" for="traffic">6 coches</output></label>
+            <input type="range" id="traffic" min="0" max="30" step="1" value="6">
+            <small>Circulan por su carril; chocar con uno elimina al coche.</small>
+          </div>
+          <div class="field">
+            <label class="check" for="lights"><input type="checkbox" id="lights" checked> Semáforos en los cruces</label>
+            <small>Pasarse un rojo elimina al coche. Se aplica en la siguiente generación.</small>
+          </div>
+          <div class="field">
             <button class="btn danger" id="forget">Olvidar lo aprendido</button>
             <small>Empieza otra vez con cerebros al azar.</small>
           </div>
@@ -467,8 +565,27 @@
             <button data-tool="start" aria-pressed="false">Salida</button>
           </div>
           <button class="btn" id="finish" disabled><span class="long">Terminar tramo</span><span class="short">Terminar</span></button>
-          <button class="btn" id="sample"><span class="long">Mapa de ejemplo</span><span class="short">Ejemplo</span></button>
+          <button class="btn" id="toggle-maps" aria-expanded="false" aria-controls="maps">Mis mapas</button>
           <button class="btn danger" id="clear">Vaciar</button>
+        </div>
+        <div class="maps" id="maps" hidden>
+          <form class="save-row" id="save-form">
+            <label class="sr-only" for="map-name">Nombre del mapa</label>
+            <input id="map-name" type="text" maxlength="40" placeholder="Nombre del mapa" autocomplete="off">
+            <button class="btn primary" type="submit">Guardar</button>
+          </form>
+          <div class="map-group">
+            <span class="group-k">Guardados en este navegador</span>
+            <ul class="map-list" id="map-list"></ul>
+            <p class="empty" id="maps-empty">Todavía no hay mapas guardados. Ponle nombre al actual y guárdalo.</p>
+          </div>
+          <div class="map-group">
+            <span class="group-k">Plantillas</span>
+            <div class="row">
+              <button class="btn" data-template="circuito">Circuito</button>
+              <button class="btn" data-template="cuadricula">Cuadrícula</button>
+            </div>
+          </div>
         </div>
         <p class="hint" id="hint"></p>
       </div>
@@ -483,5 +600,7 @@
 <script src="js/world.js"></script>
 <script src="js/network.js"></script>
 <script src="js/car.js"></script>
+<script src="js/traffic.js"></script>
+<script src="js/scenery.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/app.js"></script>

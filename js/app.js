@@ -67,6 +67,19 @@
       panel: get("--panel"),
       signInk: get("--sign-ink"),
       font: get("--f-display"),
+      building: get("--building"),
+      roof1: get("--roof-1"),
+      roof2: get("--roof-2"),
+      roof3: get("--roof-3"),
+      roofLine: get("--roof-line"),
+      tree: get("--tree"),
+      treeAlt: get("--tree-alt"),
+      treeLight: get("--tree-light"),
+      worldShadow: get("--world-shadow"),
+      stop: get("--stop"),
+      sigBox: get("--sig-box"),
+      signal: { red: get("--sig-red"), yellow: get("--sig-amber"), green: get("--sig-green") },
+      traffic: [get("--traffic-1"), get("--traffic-2"), get("--traffic-3"), get("--traffic-4")],
     };
   }
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => (colors = readColors()));
@@ -106,6 +119,8 @@
       record: data.record || 0,
       history: data.history || [],
       generation: data.generation || 1,
+      traffic: data.traffic ?? 6,
+      lights: data.lights ?? true,
     });
     sim.onGeneration = onGeneration;
     ui.speed = data.speed || 1;
@@ -129,6 +144,8 @@
       generation: sim.generation,
       count: sim.count,
       mutation: sim.mutation,
+      traffic: sim.trafficCount,
+      lights: sim.lights,
       mode: ui.mode,
       follow: ui.follow,
       speed: ui.speed,
@@ -169,7 +186,8 @@
   }
 
   function buildWorld() {
-    world.generate();
+    // Mientras se arrastra un punto no se recolocan edificios ni árboles.
+    world.generate({ scenery: !(gesture && gesture.type === "drag") });
     ui.needsBuild = false;
   }
 
@@ -214,10 +232,63 @@
 
     drawSurveyGrid();
     world.draw(ctx, colors);
+    drawStopLines();
     drawStart();
+    drawBuildings(ctx, world.scenery.buildings, colors);
+    drawTrees(ctx, world.scenery.trees, colors);
     if (ui.mode === "edit") drawGraph();
     else drawCars();
+    drawSignals();
     if (ui.mode === "train" && ui.showBrain) drawNetwork();
+  }
+
+  // ---------- Semáforos ----------
+  const lightsVisible = () => sim.lights && world.intersections.length > 0;
+  const currentLight = (intersection, approach) =>
+    ui.mode === "train" && sim.traffic ? lightState(intersection, approach, sim.traffic.frame) : null;
+
+  // Línea de detención sobre el carril de entrada de cada acceso.
+  function drawStopLines() {
+    if (!lightsVisible()) return;
+    const half = ROAD_WIDTH / 2 - 5;
+    ctx.strokeStyle = colors.stop;
+    ctx.lineWidth = 5;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    for (const x of world.intersections) {
+      for (const a of x.approaches) {
+        ctx.moveTo(a.stop.x, a.stop.y);
+        ctx.lineTo(a.stop.x + a.right.x * half, a.stop.y + a.right.y * half);
+      }
+    }
+    ctx.stroke();
+  }
+
+  // Semáforo en la acera derecha de cada acceso; en el editor se ven apagados.
+  function drawSignals() {
+    if (!lightsVisible()) return;
+    for (const x of world.intersections) {
+      for (const a of x.approaches) {
+        const state = currentLight(x, a);
+        const px = a.stop.x + a.right.x * (ROAD_WIDTH / 2 + 14);
+        const py = a.stop.y + a.right.y * (ROAD_WIDTH / 2 + 14);
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(Math.atan2(a.u.y, a.u.x));
+        ctx.fillStyle = colors.sigBox;
+        roundedRect(ctx, -7, -17, 14, 34, 4);
+        ctx.fill();
+        ["red", "yellow", "green"].forEach((lamp, i) => {
+          ctx.globalAlpha = state === lamp ? 1 : 0.22;
+          ctx.fillStyle = colors.signal[lamp];
+          ctx.beginPath();
+          ctx.arc(0, -10 + i * 10, 4.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
   }
 
   // Cuadrícula de 10 m, como la de un plano topográfico.
@@ -311,6 +382,9 @@
 
   function drawCars() {
     const leader = sim.leader;
+    if (sim.traffic) {
+      for (const car of sim.traffic.cars) paintCar(car, colors.traffic[car.color], true, car.speed < 0.4);
+    }
     ctx.globalAlpha = 0.28;
     for (const car of sim.cars) {
       if (car !== leader) paintCar(car, car.damaged ? colors.wreck : colors.car, false);
@@ -326,7 +400,7 @@
     else c.rect(x, y, w, h);
   }
 
-  function paintCar(car, color, detailed) {
+  function paintCar(car, color, detailed, braking = false) {
     ctx.save();
     ctx.translate(car.x, car.y);
     ctx.rotate(car.angle);
@@ -345,6 +419,11 @@
       ctx.fillStyle = colors.edge;
       ctx.fillRect(CAR_LENGTH / 2 - 3, -CAR_WIDTH / 2 + 3, 3, 6); // faros
       ctx.fillRect(CAR_LENGTH / 2 - 3, CAR_WIDTH / 2 - 9, 3, 6);
+      if (braking) {
+        ctx.fillStyle = colors.signal.red; // luces de freno
+        ctx.fillRect(-CAR_LENGTH / 2, -CAR_WIDTH / 2 + 3, 3, 6);
+        ctx.fillRect(-CAR_LENGTH / 2, CAR_WIDTH / 2 - 9, 3, 6);
+      }
     }
     ctx.restore();
   }
@@ -670,7 +749,9 @@
       return;
     }
     if (gesture && gesture.type === "tap" && e.type === "pointerup") handleTap(gesture.at, gesture.hit);
+    const wasDrag = gesture && gesture.type === "drag";
     gesture = null;
+    if (wasDrag) ui.needsBuild = true; // ahora sí, recoloca edificios y árboles
   }
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", endPointer);
@@ -751,7 +832,12 @@
     $("#count-out").textContent = sim.count;
     $("#mutation").value = Math.round(sim.mutation * 100);
     $("#mutation-out").textContent = `${Math.round(sim.mutation * 100)} %`;
+    $("#traffic").value = sim.trafficCount;
+    $("#traffic-out").textContent = trafficLabel(sim.trafficCount);
+    $("#lights").checked = sim.lights;
   }
+
+  const trafficLabel = (n) => (n === 0 ? "sin tráfico" : n === 1 ? "1 coche" : `${n} coches`);
 
   $("#mode-edit").addEventListener("click", () => setMode("edit"));
   $("#mode-train").addEventListener("click", () => setMode("train"));
@@ -832,15 +918,122 @@
     ui.selected = null;
     syncControls();
   });
-  $("#sample").addEventListener("click", () => {
-    const data = defaultMapData();
+  $("#traffic").addEventListener("input", (e) => {
+    sim.trafficCount = Number(e.target.value);
+    $("#traffic-out").textContent = trafficLabel(sim.trafficCount);
+    persistSoon();
+  });
+  $("#lights").addEventListener("change", (e) => {
+    sim.lights = e.target.checked;
+    persistSoon();
+  });
+
+  // ---------- Mis mapas ----------
+  const MAPS_KEY = "carreteras-neuronales/maps";
+  const mapStore = {
+    list() {
+      try {
+        return JSON.parse(localStorage.getItem(MAPS_KEY)) || [];
+      } catch {
+        return [];
+      }
+    },
+    save(list) {
+      try {
+        localStorage.setItem(MAPS_KEY, JSON.stringify(list));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+
+  function currentMapData() {
+    const { x, y, angle } = world.start;
+    return { ...world.graph.toJSON(), start: { x: Math.round(x), y: Math.round(y), angle } };
+  }
+
+  function openMap(data) {
     world.graph = Graph.fromJSON(data);
     world.start = { ...data.start };
     ui.selected = null;
     mapEdited();
     buildWorld();
     fitView();
+  }
+
+  function renderMaps() {
+    const list = mapStore.list();
+    const ul = $("#map-list");
+    ul.replaceChildren();
+    $("#maps-empty").hidden = list.length > 0;
+    for (const item of list) {
+      const li = document.createElement("li");
+      li.className = "map-item";
+      const name = document.createElement("div");
+      name.className = "name";
+      const title = document.createElement("strong");
+      title.textContent = item.name;
+      const meta = document.createElement("span");
+      const when = new Date(item.savedAt).toLocaleDateString("es", { day: "numeric", month: "short" });
+      meta.textContent = `${item.map.segments.length} tramos · ${when}`;
+      name.append(title, meta);
+      const open = document.createElement("button");
+      open.className = "btn";
+      open.textContent = "Abrir";
+      open.addEventListener("click", () => {
+        openMap(item.map);
+        toast(`Mapa «${item.name}» abierto.`);
+      });
+      const remove = document.createElement("button");
+      remove.className = "btn danger";
+      remove.textContent = "Borrar";
+      armed(remove, "¿Seguro?", () => {
+        mapStore.save(mapStore.list().filter((m) => m.name !== item.name));
+        renderMaps();
+      });
+      li.append(name, open, remove);
+      ul.append(li);
+    }
+  }
+
+  $("#toggle-maps").addEventListener("click", (e) => {
+    const panel = $("#maps");
+    panel.hidden = !panel.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+    if (!panel.hidden) renderMaps();
   });
+  $("#save-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#map-name");
+    const name = input.value.trim();
+    if (!name) {
+      toast("Escribe un nombre para el mapa.");
+      input.focus();
+      return;
+    }
+    if (!world.graph.segments.length) {
+      toast("El mapa está vacío: traza alguna carretera antes de guardarlo.");
+      return;
+    }
+    // Un nombre repetido reemplaza al mapa anterior con ese nombre.
+    const list = mapStore.list().filter((m) => m.name.toLowerCase() !== name.toLowerCase());
+    list.unshift({ name, map: currentMapData(), savedAt: Date.now() });
+    if (mapStore.save(list)) {
+      toast(`Mapa «${name}» guardado.`);
+      input.value = "";
+    } else {
+      toast("Este navegador no permite guardar mapas (modo privado o almacenamiento lleno).");
+    }
+    renderMaps();
+  });
+  $$("[data-template]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const template = MAP_TEMPLATES[b.dataset.template];
+      openMap(template.build());
+      toast(`Plantilla «${template.name}» abierta.`);
+    })
+  );
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {

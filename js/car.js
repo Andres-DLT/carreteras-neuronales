@@ -6,6 +6,7 @@ const CAR_WIDTH = 26;
 const METERS_PER_UNIT = 4.5 / CAR_LENGTH; // un coche compacto mide unos 4.5 m
 const CELL_SIZE = 40; // rejilla con la que se mide el terreno explorado (3.75 m)
 const IDLE_LIMIT = 150; // fotogramas sin pisar terreno nuevo antes de retirarlo (2.5 s)
+const BRAIN_INPUTS = 9; // 7 sensores + semáforo delante + coche delante
 
 // Abanico de rayos hacia delante; cada lectura es la distancia al borde más cercano.
 class Sensor {
@@ -18,25 +19,46 @@ class Sensor {
     this.readings = [];
   }
 
-  update(segments) {
+  // segments: bordes fijos; moving: coches de tráfico y semáforos en rojo.
+  // Un semáforo solo se ve desde el lado por el que se entra al cruce.
+  update(segments, moving = []) {
     const { car } = this;
     for (let i = 0; i < this.rayCount; i++) {
       const t = this.rayCount === 1 ? 0.5 : i / (this.rayCount - 1);
       const angle = car.angle + lerp(-this.raySpread / 2, this.raySpread / 2, t);
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
       const start = { x: car.x, y: car.y };
-      const end = {
-        x: car.x + Math.cos(angle) * this.rayLength,
-        y: car.y + Math.sin(angle) * this.rayLength,
-      };
+      const end = { x: car.x + dx * this.rayLength, y: car.y + dy * this.rayLength };
       let nearest = null;
       for (const [p, q] of segments) {
         const hit = getIntersection(start, end, p, q);
-        if (hit && (!nearest || hit.offset < nearest.offset)) nearest = hit;
+        if (hit && (!nearest || hit.offset < nearest.offset)) {
+          hit.kind = "edge";
+          nearest = hit;
+        }
+      }
+      for (const seg of moving) {
+        if (seg.normal && dx * seg.normal.x + dy * seg.normal.y <= 0) continue;
+        const hit = getIntersection(start, end, seg[0], seg[1]);
+        if (hit && (!nearest || hit.offset < nearest.offset)) {
+          hit.kind = seg.kind;
+          nearest = hit;
+        }
       }
       this.rays[i] = [start, end];
       this.readings[i] = nearest;
     }
   }
+}
+
+function carPolygon(x, y, angle) {
+  const radius = Math.hypot(CAR_LENGTH, CAR_WIDTH) / 2;
+  const alpha = Math.atan2(CAR_WIDTH, CAR_LENGTH);
+  return [alpha, -alpha, Math.PI + alpha, Math.PI - alpha].map((a) => ({
+    x: x + Math.cos(angle + a) * radius,
+    y: y + Math.sin(angle + a) * radius,
+  }));
 }
 
 class Car {
@@ -52,7 +74,7 @@ class Car {
     this.damaged = false;
     this.reason = null;
     this.sensor = new Sensor(this);
-    this.brain = brain || new NeuralNetwork([this.sensor.rayCount, 6, 4]);
+    this.brain = brain || new NeuralNetwork([BRAIN_INPUTS, 6, 4]);
     this.controls = { forward: false, left: false, right: false, reverse: false };
     this.cells = new Set();
     this.idle = 0;
@@ -68,21 +90,38 @@ class Car {
     return Math.abs(this.speed) * 60 * METERS_PER_UNIT * 3.6;
   }
 
-  update(grid, scratch) {
+  update(grid, scratch, traffic = null) {
     if (this.damaged) return;
+    const x0 = this.x;
+    const y0 = this.y;
     this.move();
     this.polygon = this.createPolygon();
     const reach = this.sensor.rayLength + CAR_LENGTH;
     const nearby = grid.query(this.x - reach, this.y - reach, this.x + reach, this.y + reach, scratch);
-    if (this.collides(nearby)) {
+    const moving = traffic ? traffic.near(this.x, this.y, reach) : NO_TRAFFIC;
+    if (this.collides(nearby) || this.collides(moving.cars)) {
       this.crash("choque");
       return;
     }
-    this.sensor.update(nearby);
+    if (traffic && traffic.ranRed(x0, y0, this.x, this.y)) {
+      this.crash("semáforo");
+      return;
+    }
+    this.sensor.update(nearby, moving.all);
+    // 7 distancias + qué tan cerca hay un rojo + qué tan cerca hay otro coche:
+    // sin estas dos, un semáforo se ve igual que la pared de una curva.
     const inputs = this.sensor.readings.map((r) => (r ? 1 - r.offset : 0));
+    let light = 0;
+    let car = 0;
+    for (const r of this.sensor.readings) {
+      if (r && r.kind === "light") light = Math.max(light, 1 - r.offset);
+      if (r && r.kind === "car") car = Math.max(car, 1 - r.offset);
+    }
+    inputs.push(light, car);
     const [forward, left, right, reverse] = NeuralNetwork.feedForward(inputs, this.brain);
     Object.assign(this.controls, { forward: !!forward, left: !!left, right: !!right, reverse: !!reverse });
-    this.explore();
+    // Esperar ante un rojo o detrás de otro coche no cuenta como estar atascado.
+    this.explore(light > 0 || car > 0.4);
     if (this.idle > IDLE_LIMIT) this.crash("atascado");
   }
 
@@ -104,12 +143,7 @@ class Car {
   }
 
   createPolygon() {
-    const radius = Math.hypot(CAR_LENGTH, CAR_WIDTH) / 2;
-    const alpha = Math.atan2(CAR_WIDTH, CAR_LENGTH);
-    return [alpha, -alpha, Math.PI + alpha, Math.PI - alpha].map((a) => ({
-      x: this.x + Math.cos(this.angle + a) * radius,
-      y: this.y + Math.sin(this.angle + a) * radius,
-    }));
+    return carPolygon(this.x, this.y, this.angle);
   }
 
   collides(segments) {
@@ -123,10 +157,10 @@ class Car {
   }
 
   // La aptitud es el terreno distinto que pisa: dar vueltas en el mismo sitio no suma.
-  explore() {
+  explore(waiting = false) {
     const key = Math.floor(this.x / CELL_SIZE) * 100003 + Math.floor(this.y / CELL_SIZE);
     if (this.cells.has(key)) {
-      this.idle++;
+      if (!waiting) this.idle++;
     } else {
       this.cells.add(key);
       this.idle = 0;

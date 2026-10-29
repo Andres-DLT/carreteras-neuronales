@@ -109,11 +109,15 @@ class World {
     this.generate();
   }
 
-  generate() {
+  // scenery: false mientras se arrastra un punto, para no recolocar edificios
+  // y árboles en cada movimiento; se recalculan al soltar.
+  generate({ scenery = true } = {}) {
     this.envelopes = this.graph.segments.map((s) => roadEnvelope(s.a, s.b));
     this.borders = roadBorders(this.envelopes);
     this.grid = new SegmentGrid(this.borders);
     this.degrees = new Map(this.graph.points.map((p) => [p, this.graph.degree(p)]));
+    this.intersections = buildIntersections(this.graph);
+    if (scenery || !this.scenery) this.scenery = generateScenery(this.graph);
   }
 
   isOnRoad(p) {
@@ -197,5 +201,29 @@ function defaultMapData() {
   chain(find(0, -450), extra(50, -225), center, extra(-50, 225), find(0, 450));
   chain(find(-740, 0), extra(-370, 35), center, extra(350, -35), find(700, 0));
 
-  return { points, segments, start: { x: 300, y: 450, angle: Math.PI } };
+  // La salida está antes de una curva y lejos de los semáforos: así lo primero
+  // que aprenden es a girar, y después a respetar los cruces.
+  return { points, segments, start: { x: -250, y: 450, angle: Math.PI } };
 }
+
+// Plantilla en cuadrícula: 4 × 3 calles rectas con muchos cruces en T y en X.
+function gridMapData() {
+  const xs = [-700, -233, 233, 700];
+  const ys = [-450, 0, 450];
+  const points = [];
+  ys.forEach((y) => xs.forEach((x) => points.push([x, y])));
+  const id = (i, j) => j * xs.length + i;
+  const segments = [];
+  ys.forEach((_, j) =>
+    xs.forEach((_, i) => {
+      if (i + 1 < xs.length) segments.push([id(i, j), id(i + 1, j)]);
+      if (j + 1 < ys.length) segments.push([id(i, j), id(i, j + 1)]);
+    })
+  );
+  return { points, segments, start: { x: -520, y: 450, angle: 0 } };
+}
+
+const MAP_TEMPLATES = {
+  circuito: { name: "Circuito", build: defaultMapData },
+  cuadricula: { name: "Cuadrícula", build: gridMapData },
+};
