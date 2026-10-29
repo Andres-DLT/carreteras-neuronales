@@ -117,6 +117,7 @@ class World {
     this.grid = new SegmentGrid(this.borders);
     this.degrees = new Map(this.graph.points.map((p) => [p, this.graph.degree(p)]));
     this.intersections = buildIntersections(this.graph);
+    this.crosswalks = buildCrosswalks(this.graph, this.intersections);
     if (scenery || !this.scenery) this.scenery = generateScenery(this.graph);
   }
 

@@ -80,10 +80,20 @@
       sigBox: get("--sig-box"),
       signal: { red: get("--sig-red"), yellow: get("--sig-amber"), green: get("--sig-green") },
       traffic: [get("--traffic-1"), get("--traffic-2"), get("--traffic-3"), get("--traffic-4")],
+      wallShade: get("--wall-shade"),
+      trunk: get("--trunk"),
+      pedHead: get("--ped-head"),
+      line: get("--line"),
+      mono: get("--f-mono"),
+      causes: [get("--cause-1"), get("--cause-2"), get("--cause-3"), get("--cause-4"), get("--cause-5")],
     };
   }
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => (colors = readColors()));
-  new MutationObserver(() => (colors = readColors())).observe(document.documentElement, {
+  const themeChanged = () => {
+    colors = readColors();
+    chartsDirty = true;
+  };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", themeChanged);
+  new MutationObserver(themeChanged).observe(document.documentElement, {
     attributes: true,
     attributeFilter: ["data-theme"],
   });
@@ -103,9 +113,13 @@
     playing: true,
     speed: 1,
     showBrain: !narrow,
+    showCauses: !narrow,
+    view3d: false,
     needsBuild: false,
     mapChanged: false,
+    trainedKey: null, // mapa al que pertenece el entrenamiento actual
   };
+  let chartsDirty = true;
 
   function boot(saved) {
     const data = saved && saved.map ? saved : storage.load() || {};
@@ -115,17 +129,22 @@
     sim = new Simulation(world, {
       count: data.count || (narrow ? 60 : 120),
       mutation: data.mutation ?? 0.15,
-      brain: data.brain || null,
+      brain: validBrain(data.brain) ? data.brain : null,
       record: data.record || 0,
       history: data.history || [],
+      causes: data.causes || [],
       generation: data.generation || 1,
       traffic: data.traffic ?? 6,
       lights: data.lights ?? true,
+      pedestrians: data.pedestrians ?? true,
     });
     sim.onGeneration = onGeneration;
+    ui.trainedKey = mapKey(currentMapData());
     ui.speed = data.speed || 1;
     ui.follow = data.follow ?? true;
+    ui.view3d = !!data.view3d;
     if (typeof data.showBrain === "boolean") ui.showBrain = data.showBrain;
+    if (typeof data.showCauses === "boolean") ui.showCauses = data.showCauses;
 
     resize();
     setMode(data.mode === "edit" ? "edit" : "train");
@@ -141,16 +160,85 @@
       brain: sim.brain,
       record: keepRecord ? sim.record : 0,
       history: keepRecord ? sim.history : [],
-      generation: sim.generation,
+      causes: keepRecord ? sim.causes : [],
+      generation: keepRecord ? sim.generation : 1,
       count: sim.count,
       mutation: sim.mutation,
       traffic: sim.trafficCount,
       lights: sim.lights,
+      pedestrians: sim.pedestrians,
       mode: ui.mode,
       follow: ui.follow,
       speed: ui.speed,
       showBrain: ui.showBrain,
+      showCauses: ui.showCauses,
+      view3d: ui.view3d,
     };
+  }
+
+  // ---------- Cerebro guardado por mapa ----------
+  // Cada mapa (identificado por su forma y su salida) guarda su mejor cerebro,
+  // así al volver a un mapa no hay que reentrenar.
+  const BRAINS_KEY = "carreteras-neuronales/brains";
+  const brainStore = {
+    all() {
+      try {
+        return JSON.parse(localStorage.getItem(BRAINS_KEY)) || {};
+      } catch {
+        return {};
+      }
+    },
+    get(key) {
+      const entry = this.all()[key];
+      return entry && validBrain(entry.brain) ? entry : null;
+    },
+    write(all) {
+      try {
+        localStorage.setItem(BRAINS_KEY, JSON.stringify(all));
+      } catch {
+        // Sin almacenamiento: el cerebro de cada mapa vive solo en esta pestaña.
+      }
+    },
+    put(key, training) {
+      if (!training.brain) return;
+      const all = this.all();
+      all[key] = { ...training, savedAt: Date.now() };
+      const keys = Object.keys(all).sort((a, b) => all[b].savedAt - all[a].savedAt);
+      for (const old of keys.slice(20)) delete all[old]; // como mucho 20 mapas
+      this.write(all);
+    },
+    remove(key) {
+      const all = this.all();
+      delete all[key];
+      this.write(all);
+    },
+  };
+
+  function mapKey(data) {
+    const s = JSON.stringify([
+      data.points.map(([x, y]) => [Math.round(x), Math.round(y)]),
+      data.segments,
+      Math.round(data.start.x),
+      Math.round(data.start.y),
+      Math.round(data.start.angle * 1000),
+    ]);
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return (h >>> 0).toString(36);
+  }
+
+  // Comprueba que un cerebro guardado o importado tiene la forma que espera la red.
+  function validBrain(brain) {
+    if (!brain || !Array.isArray(brain.levels) || !brain.levels.length) return false;
+    const nums = (a, n) => Array.isArray(a) && a.length === n && a.every((v) => Number.isFinite(v));
+    let inputs = BRAIN_INPUTS;
+    for (const level of brain.levels) {
+      const outputs = Array.isArray(level.outputs) ? level.outputs.length : 0;
+      if (!outputs || !nums(level.inputs, inputs) || !nums(level.outputs, outputs) || !nums(level.biases, outputs)) return false;
+      if (!Array.isArray(level.weights) || level.weights.length !== inputs || !level.weights.every((row) => nums(row, outputs))) return false;
+      inputs = outputs;
+    }
+    return inputs === 4;
   }
 
   const persist = () => storage.save(snapshot());
@@ -169,9 +257,19 @@
         mode = "edit";
       } else if (ui.mapChanged) {
         world.ensureStart();
-        sim.resetRecord();
+        if (ui.trainedKey) brainStore.put(ui.trainedKey, sim.training());
+        const key = mapKey(currentMapData());
+        const saved = brainStore.get(key);
+        if (saved) {
+          sim.adopt(saved);
+          toast(`Este mapa ya tenía entrenamiento: récord ${meters(saved.record)}, generación ${saved.generation}.`);
+        } else {
+          sim.adopt({ brain: sim.brain });
+          toast("Mapa nuevo: los coches conservan lo aprendido y empiezan en la generación 1.");
+        }
+        ui.trainedKey = key;
         ui.mapChanged = false;
-        toast("Mapa nuevo: los coches conservan lo aprendido, el récord vuelve a cero.");
+        chartsDirty = true;
       }
     }
     ui.mode = mode;
@@ -217,6 +315,8 @@
 
   function onGeneration({ generation, fitness, improved }) {
     if (improved && generation > 1) toast(`Generación ${generation}: nuevo récord, ${meters(fitness)}`);
+    if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
+    chartsDirty = true;
     persistSoon();
   }
 
@@ -232,14 +332,60 @@
 
     drawSurveyGrid();
     world.draw(ctx, colors);
+    drawCrosswalks();
     drawStopLines();
     drawStart();
-    drawBuildings(ctx, world.scenery.buildings, colors);
-    drawTrees(ctx, world.scenery.trees, colors);
+    // Los coches van antes que el paisaje: en 3D los edificios altos pueden taparlos.
+    if (ui.mode === "train") {
+      drawCars();
+      drawPedestrians();
+    }
+    if (ui.view3d) drawScenery3D(ctx, world.scenery, colors, { x: view.x, y: view.y });
+    else {
+      drawBuildings(ctx, world.scenery.buildings, colors);
+      drawTrees(ctx, world.scenery.trees, colors);
+    }
     if (ui.mode === "edit") drawGraph();
-    else drawCars();
     drawSignals();
     if (ui.mode === "train" && ui.showBrain) drawNetwork();
+  }
+
+  // ---------- Pasos de cebra y peatones ----------
+  function drawCrosswalks() {
+    if (!sim.pedestrians) return;
+    ctx.fillStyle = colors.stop;
+    for (const { c, u } of world.crosswalks) {
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(Math.atan2(u.y, u.x));
+      for (let y = -ROAD_WIDTH / 2 + 6; y <= ROAD_WIDTH / 2 - 12; y += 12) {
+        ctx.fillRect(-CROSSWALK_DEPTH / 2, y, CROSSWALK_DEPTH, 6);
+      }
+      ctx.restore();
+    }
+  }
+
+  // Vistos desde arriba: hombros (con la camiseta de color) y cabeza.
+  function drawPedestrians() {
+    if (!sim.traffic) return;
+    for (const w of sim.traffic.walkers) {
+      ctx.save();
+      ctx.translate(w.x, w.y);
+      ctx.rotate(w.angle);
+      ctx.fillStyle = colors.worldShadow;
+      ctx.beginPath();
+      ctx.ellipse(2.5, 3, 6, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors.traffic[w.tone];
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 5, 8.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors.pedHead;
+      ctx.beginPath();
+      ctx.arc(0.5, 0, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // ---------- Semáforos ----------
@@ -597,11 +743,164 @@
     setText(els.best, meters(leader.cells.size));
     setText(els.record, meters(sim.record));
     setText(els.kmh, `${Math.round(leader.kmh)} km/h`);
-    if (sim.history.length !== lastSparkLength || tick < 12) {
+    if (sim.history.length !== lastSparkLength || tick < 12 || chartsDirty) {
       lastSparkLength = sim.history.length;
       drawSpark();
     }
+    if (chartsDirty) {
+      chartsDirty = false;
+      if (ui.showCauses) drawCauses();
+    }
   }
+
+  // ---------- Gráfica: por qué se eliminan ----------
+  // Barras apiladas al 100 %: una por generación (las últimas 30), con las causas
+  // en orden fijo de abajo arriba y el mismo color siempre para cada causa.
+  const CAUSE_LABELS = {
+    choque: "Choque",
+    semáforo: "Se pasó un rojo",
+    atropello: "Atropello",
+    atascado: "Atascado",
+    "en pista": "En pista al final",
+  };
+  const CAUSE_BARS = 30;
+  const causesCanvas = $("#causes");
+  const causesCtx = causesCanvas.getContext("2d");
+  const causesTip = $("#causes-tip");
+  let causesHover = -1;
+  let causesLayout = null;
+
+  function buildCausesLegend() {
+    const ul = $("#causes-legend");
+    ul.replaceChildren();
+    CAUSES.forEach((cause, i) => {
+      const li = document.createElement("li");
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.setProperty("--swatch", `var(--cause-${i + 1})`);
+      const name = document.createElement("span");
+      name.textContent = CAUSE_LABELS[cause];
+      const value = document.createElement("b");
+      value.dataset.cause = cause;
+      value.textContent = "–";
+      li.append(swatch, name, value);
+      ul.append(li);
+    });
+  }
+  buildCausesLegend();
+
+  function drawCauses() {
+    const { w, h } = sizeCanvas(causesCanvas);
+    if (!w || !h) return;
+    const c = causesCtx;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const data = sim.causes.slice(-CAUSE_BARS);
+    const left = 34;
+    const right = 2;
+    const top = 6;
+    const bottom = 16;
+    const plotW = w - left - right;
+    const plotH = h - top - bottom;
+    const slot = plotW / CAUSE_BARS;
+    const barW = Math.max(2, slot - 2);
+
+    c.font = `400 10px ${colors.mono}`;
+    c.textBaseline = "middle";
+    c.textAlign = "right";
+    c.lineWidth = 1;
+    for (const f of [0, 0.5, 1]) {
+      const y = Math.round(top + plotH * (1 - f)) + 0.5;
+      c.strokeStyle = colors.line;
+      c.beginPath();
+      c.moveTo(left, y);
+      c.lineTo(w - right, y);
+      c.stroke();
+      c.fillStyle = colors.muted;
+      c.fillText(`${f * 100} %`, left - 5, y);
+    }
+    if (!data.length) {
+      c.textAlign = "left";
+      c.fillText("Aparece al terminar la 1.ª generación", left + 6, top + plotH / 2);
+      causesLayout = null;
+      return;
+    }
+
+    // Las más recientes a la derecha, como una línea de tiempo.
+    const firstX = left + plotW - data.length * slot;
+    data.forEach((g, i) => {
+      const total = CAUSES.reduce((s, k) => s + g[k], 0) || 1;
+      const x = firstX + i * slot + (slot - barW) / 2;
+      const visible = CAUSES.map((k, ci) => ({ v: g[k], ci })).filter((s) => s.v > 0);
+      let base = top + plotH;
+      c.globalAlpha = causesHover === -1 || causesHover === i ? 1 : 0.4;
+      visible.forEach((s, si) => {
+        const hh = (plotH * s.v) / total;
+        const y = base - hh;
+        const gap = si === visible.length - 1 ? 0 : 2; // 2 px de separación entre tramos
+        c.fillStyle = colors.causes[s.ci];
+        c.beginPath();
+        const height = Math.max(0.5, hh - gap);
+        if (si === visible.length - 1 && c.roundRect) c.roundRect(x, y, barW, height, [Math.min(4, barW / 2), Math.min(4, barW / 2), 0, 0]);
+        else c.rect(x, y + gap, barW, height);
+        c.fill();
+        base = y;
+      });
+    });
+    c.globalAlpha = 1;
+
+    const firstGen = sim.generation - data.length;
+    c.fillStyle = colors.muted;
+    c.textBaseline = "alphabetic";
+    c.textAlign = "left";
+    c.fillText(`gen ${firstGen}`, firstX, h - 3);
+    c.textAlign = "right";
+    c.fillText(`gen ${sim.generation - 1}`, w - right, h - 3);
+    causesLayout = { firstX, slot, data, firstGen };
+
+    // Leyenda: la última generación en cifras (los colores nunca van solos).
+    const last = data[data.length - 1];
+    $$("#causes-legend b").forEach((b) => (b.textContent = String(last[b.dataset.cause])));
+  }
+
+  function showCausesTip(e) {
+    if (!causesLayout) return;
+    const rect = causesCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const i = Math.floor((mx - causesLayout.firstX) / causesLayout.slot);
+    if (i < 0 || i >= causesLayout.data.length) return hideCausesTip();
+    if (i !== causesHover) {
+      causesHover = i;
+      drawCauses();
+    }
+    const g = causesLayout.data[i];
+    const total = CAUSES.reduce((s, k) => s + g[k], 0) || 1;
+    causesTip.replaceChildren();
+    const title = document.createElement("strong");
+    title.textContent = `Generación ${causesLayout.firstGen + i}`;
+    causesTip.append(title);
+    CAUSES.forEach((k, ci) => {
+      const row = document.createElement("span");
+      const sw = document.createElement("i");
+      sw.style.setProperty("--swatch", `var(--cause-${ci + 1})`);
+      row.append(sw, `${CAUSE_LABELS[k]}: ${g[k]} (${Math.round((g[k] / total) * 100)} %)`);
+      causesTip.append(row);
+    });
+    causesTip.hidden = false;
+    const x = causesLayout.firstX + (i + 0.5) * causesLayout.slot;
+    const tipW = causesTip.offsetWidth;
+    causesTip.style.left = `${clamp(x - tipW / 2, 0, rect.width - tipW)}px`;
+  }
+  function hideCausesTip() {
+    causesTip.hidden = true;
+    if (causesHover !== -1) {
+      causesHover = -1;
+      drawCauses();
+    }
+  }
+  causesCanvas.addEventListener("pointermove", showCausesTip);
+  causesCanvas.addEventListener("pointerdown", showCausesTip);
+  causesCanvas.addEventListener("pointerleave", hideCausesTip);
 
   function updateScale() {
     const options = [5, 10, 20, 50, 100, 200, 500];
@@ -617,6 +916,7 @@
     canvas.width = Math.round(canvas.clientWidth * dpr);
     canvas.height = Math.round(canvas.clientHeight * dpr);
     lastSparkLength = -1;
+    chartsDirty = true;
   }
   new ResizeObserver(resize).observe(canvas);
 
@@ -826,6 +1126,10 @@
     $("#follow").setAttribute("aria-pressed", String(ui.follow));
     $("#toggle-brain").setAttribute("aria-pressed", String(ui.showBrain));
     $("#brain-card").hidden = !ui.showBrain;
+    $("#toggle-causes").setAttribute("aria-pressed", String(ui.showCauses));
+    $("#causes-card").hidden = !ui.showCauses;
+    $("#view3d").setAttribute("aria-pressed", String(ui.view3d));
+    $("#pedestrians").checked = sim.pedestrians;
     $("#finish").disabled = !ui.selected;
     $("#hint").innerHTML = HINTS[ui.tool];
     $("#count").value = sim.count;
@@ -898,6 +1202,8 @@
   }
   armed($("#forget"), "Toca otra vez para olvidar", () => {
     sim.forget();
+    if (ui.trainedKey) brainStore.remove(ui.trainedKey);
+    chartsDirty = true;
     persist();
     toast("Cerebros nuevos al azar: empieza la generación 1.");
   });
@@ -925,6 +1231,21 @@
   });
   $("#lights").addEventListener("change", (e) => {
     sim.lights = e.target.checked;
+    persistSoon();
+  });
+  $("#pedestrians").addEventListener("change", (e) => {
+    sim.pedestrians = e.target.checked;
+    persistSoon();
+  });
+  $("#toggle-causes").addEventListener("click", () => {
+    ui.showCauses = !ui.showCauses;
+    chartsDirty = true;
+    syncControls();
+    persistSoon();
+  });
+  $("#view3d").addEventListener("click", () => {
+    ui.view3d = !ui.view3d;
+    syncControls();
     persistSoon();
   });
 
@@ -1027,6 +1348,66 @@
     }
     renderMaps();
   });
+  // ---------- Exportar e importar ----------
+  // El archivo lleva el mapa y, si existe, el cerebro entrenado en ese mapa.
+  const slug = (s) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "mapa";
+
+  $("#export-map").addEventListener("click", () => {
+    if (!world.graph.segments.length) {
+      toast("El mapa está vacío: traza alguna carretera antes de exportarlo.");
+      return;
+    }
+    const name = $("#map-name").value.trim() || "Mi mapa";
+    const map = currentMapData();
+    const key = mapKey(map);
+    const training = key === ui.trainedKey && sim.brain ? sim.training() : brainStore.get(key);
+    const file = { formato: "carreteras-neuronales", version: 1, nombre: name, mapa: map, entrenamiento: training || null };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug(name)}.json`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast(training ? `Descargando ${a.download} con su cerebro entrenado.` : `Descargando ${a.download}.`);
+  });
+
+  function validMap(m) {
+    const finite = (v) => Number.isFinite(v);
+    if (!m || !Array.isArray(m.points) || !Array.isArray(m.segments) || !m.start) return false;
+    if (m.points.length > 5000 || m.segments.length > 10000 || !m.segments.length) return false;
+    if (!m.points.every((p) => Array.isArray(p) && p.length === 2 && p.every(finite))) return false;
+    const n = m.points.length;
+    if (!m.segments.every((s) => Array.isArray(s) && s.length === 2 && s.every((i) => Number.isInteger(i) && i >= 0 && i < n) && s[0] !== s[1])) return false;
+    return finite(m.start.x) && finite(m.start.y) && finite(m.start.angle);
+  }
+
+  $("#import-map").addEventListener("click", () => $("#import-file").click());
+  $("#import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const map = data.mapa || data.map;
+      if (!validMap(map)) throw new Error("mapa no válido");
+      const training = data.entrenamiento && validBrain(data.entrenamiento.brain) ? data.entrenamiento : null;
+      if (training) brainStore.put(mapKey(map), training);
+      openMap(map);
+      if (data.nombre) $("#map-name").value = String(data.nombre).slice(0, 40);
+      toast(`Mapa «${data.nombre || file.name}» importado${training ? " con su cerebro entrenado" : ""}.`);
+    } catch {
+      toast("Ese archivo no es un mapa válido de Carreteras Neuronales.");
+    }
+  });
+
   $$("[data-template]").forEach((b) =>
     b.addEventListener("click", () => {
       const template = MAP_TEMPLATES[b.dataset.template];

@@ -1,14 +1,21 @@
 "use strict";
-// Tráfico y semáforos. Todo es determinista dentro de una generación (misma
-// semilla y mismos tiempos), así el mejor cerebro repite exactamente su resultado.
+// Tráfico, semáforos y peatones. Todo es determinista dentro de una generación
+// (misma semilla y mismos tiempos), así el mejor cerebro repite exactamente su resultado.
 
 const LIGHT_GREEN = 360; // 6 s
 const LIGHT_YELLOW = 90; // 1.5 s
 const LIGHT_CYCLE = 2 * (LIGHT_GREEN + LIGHT_YELLOW);
-const STOP_GAP = 10; // distancia entre la línea de detención y el borde del cruce
+const CROSSWALK_DEPTH = 16; // ancho de las franjas del paso de cebra
+const CROSSWALK_BACK = ROAD_WIDTH / 2 + 14; // distancia del paso de cebra al centro del cruce
+const STOP_GAP = 30; // la línea de detención queda antes del paso de cebra
 const LANE_OFFSET = 31; // por la derecha, dejando libre el centro de la calzada
 const TRAFFIC_SPEED = 2; // ≈ 40 km/h, más lento que el máximo de los coches autónomos
-const NO_TRAFFIC = { cars: [], all: [] };
+const PED_SPEED = 0.8; // ≈ 4.5 km/h
+const PED_PATH = ROAD_WIDTH + 24; // de acera a acera
+const PED_WALK = Math.round(PED_PATH / PED_SPEED); // fotogramas que tarda en cruzar
+const PED_PERIOD = 720; // en pasos sin semáforo cruza alguien cada 12 s
+const PED_RADIUS = 9;
+const NO_TRAFFIC = { cars: [], people: [], all: [] };
 
 // Generador pseudoaleatorio con semilla (mulberry32).
 function seededRandom(seed) {
@@ -43,6 +50,7 @@ function buildIntersections(graph) {
       a.phase = i % 2;
       a.right = { x: -a.u.y, y: a.u.x };
       a.stop = { x: node.x - a.u.x * back, y: node.y - a.u.y * back };
+      a.zebra = { x: node.x - a.u.x * CROSSWALK_BACK, y: node.y - a.u.y * CROSSWALK_BACK };
       const half = ROAD_WIDTH / 2;
       // Barrera de un solo sentido: solo frena a quien entra al cruce.
       a.barrier = [
@@ -66,8 +74,61 @@ function lightState(intersection, approach, frame) {
   return t % half < LIGHT_GREEN ? "green" : "yellow";
 }
 
-// Coche de tráfico: recorre el grafo por su carril, frena ante el rojo y ante el
-// coche de delante, y en cada cruce elige una salida al azar (con la semilla).
+// Pasos de cebra: uno en cada acceso con semáforo (se cruza mientras ese acceso
+// está en rojo) y otro a media calle en los tramos largos (cruza alguien cada 12 s).
+function buildCrosswalks(graph, intersections) {
+  const crosswalks = [];
+  for (const intersection of intersections) {
+    for (const approach of intersection.approaches) {
+      crosswalks.push({ c: approach.zebra, u: approach.u, right: approach.right, intersection, approach });
+    }
+  }
+  graph.segments.forEach((segment, i) => {
+    const len = distance(segment.a, segment.b);
+    if (len < 560) return;
+    const u = { x: (segment.b.x - segment.a.x) / len, y: (segment.b.y - segment.a.y) / len };
+    crosswalks.push({
+      c: lerpPoint(segment.a, segment.b, 0.5),
+      u,
+      right: { x: -u.y, y: u.x },
+      offset: (i * 211) % PED_PERIOD,
+    });
+  });
+  return crosswalks;
+}
+
+// Dónde está el peatón de un paso de cebra en este fotograma (o null si no hay nadie).
+function walkerAt(crosswalk, frame) {
+  let t;
+  let lap;
+  if (crosswalk.intersection) {
+    const half = LIGHT_GREEN + LIGHT_YELLOW;
+    const local = frame + crosswalk.intersection.offset;
+    const cycleT = local % LIGHT_CYCLE;
+    const redSince = crosswalk.approach.phase === 0 ? cycleT - half : cycleT;
+    if (redSince < 0 || redSince >= half) return null;
+    t = redSince - 30; // espera medio segundo a que paren los coches
+    lap = Math.floor(local / LIGHT_CYCLE);
+  } else {
+    const local = frame + crosswalk.offset;
+    t = local % PED_PERIOD;
+    lap = Math.floor(local / PED_PERIOD);
+  }
+  if (t < 0 || t >= PED_WALK) return null;
+  const progress = t / PED_WALK;
+  const along = lerp(-PED_PATH / 2, PED_PATH / 2, lap % 2 ? 1 - progress : progress);
+  const dir = lap % 2 ? -1 : 1;
+  return {
+    x: crosswalk.c.x + crosswalk.right.x * along,
+    y: crosswalk.c.y + crosswalk.right.y * along,
+    angle: Math.atan2(crosswalk.right.y * dir, crosswalk.right.x * dir),
+    crosswalk,
+    tone: lap % 3,
+  };
+}
+
+// Coche de tráfico: recorre el grafo por su carril, frena ante el rojo, ante el
+// coche de delante y ante peatones, y en cada cruce elige una salida al azar (con la semilla).
 class TrafficCar {
   constructor(segment, from, to, s, color) {
     this.segment = segment;
@@ -115,6 +176,16 @@ class TrafficCar {
       if (gap > 0 && gap < CAR_LENGTH * 1.5) target = 0;
       else if (gap > 0 && gap < CAR_LENGTH * 3) target = Math.min(target, other.speed);
     }
+    // Cede el paso a quien cruza delante.
+    const hx = Math.cos(this.angle);
+    const hy = Math.sin(this.angle);
+    for (const w of traffic.walkers) {
+      const dx = w.x - this.x;
+      const dy = w.y - this.y;
+      const ahead = dx * hx + dy * hy;
+      const side = Math.abs(dx * hy - dy * hx);
+      if (ahead > 0 && ahead < CAR_LENGTH * 2 && side < CAR_WIDTH + PED_RADIUS * 2) target = 0;
+    }
     this.speed += clamp(target - this.speed, -0.25, 0.06);
     this.s += this.speed;
     if (this.s >= len) this.advance(traffic, len);
@@ -133,10 +204,11 @@ class TrafficCar {
 }
 
 class Traffic {
-  constructor(world, { count = 6, lights = true, seed = 20261028 } = {}) {
+  constructor(world, { count = 6, lights = true, pedestrians = true, seed = 20261028 } = {}) {
     this.world = world;
     this.count = count;
     this.lights = lights;
+    this.pedestrians = pedestrians;
     this.rng = seededRandom(seed);
     this.frame = 0;
     this.approaches = new Map(); // tramo -> accesos con semáforo en sus extremos
@@ -147,9 +219,11 @@ class Traffic {
       }
     }
     this.cars = [];
+    this.walkers = [];
     this.segments = [];
+    this.personSegments = [];
     this.barriers = [];
-    this.out = { cars: [], all: [] };
+    this.out = { cars: [], people: [], all: [] };
     this.spawn();
     this.collect();
   }
@@ -176,11 +250,19 @@ class Traffic {
 
   update() {
     this.frame++;
+    this.walkers.length = 0;
+    if (this.pedestrians) {
+      for (const crosswalk of this.world.crosswalks) {
+        const walker = walkerAt(crosswalk, this.frame);
+        if (walker) this.walkers.push(walker);
+      }
+    }
     for (const car of this.cars) car.update(this);
     this.collect();
   }
 
-  // Obstáculos móviles de este fotograma: carrocerías y semáforos en rojo.
+  // Obstáculos móviles de este fotograma: carrocerías, peatones (y el paso de
+  // cebra que ocupan, para que los sensores lo vean) y semáforos en rojo.
   collect() {
     this.segments.length = 0;
     for (const car of this.cars) {
@@ -190,6 +272,36 @@ class Traffic {
         seg.kind = "car";
         seg.mid = car;
         this.segments.push(seg);
+      }
+    }
+    this.personSegments.length = 0;
+    for (const w of this.walkers) {
+      const r = PED_RADIUS;
+      const body = [
+        { x: w.x - r, y: w.y - r },
+        { x: w.x + r, y: w.y - r },
+        { x: w.x + r, y: w.y + r },
+        { x: w.x - r, y: w.y + r },
+      ];
+      for (let i = 0; i < 4; i++) {
+        const seg = [body[i], body[(i + 1) % 4]];
+        seg.kind = "person";
+        seg.mid = w;
+        this.personSegments.push(seg);
+      }
+      // Bordes del paso ocupado: solo los ven los sensores, no matan.
+      const { c, u, right } = w.crosswalk;
+      const half = ROAD_WIDTH / 2;
+      for (const side of [-1, 1]) {
+        const m = { x: c.x + u.x * (CROSSWALK_DEPTH / 2) * side, y: c.y + u.y * (CROSSWALK_DEPTH / 2) * side };
+        const seg = [
+          { x: m.x - right.x * half, y: m.y - right.y * half },
+          { x: m.x + right.x * half, y: m.y + right.y * half },
+        ];
+        seg.kind = "person";
+        seg.mid = m;
+        seg.sensorOnly = true;
+        this.personSegments.push(seg);
       }
     }
     this.barriers.length = 0;
@@ -202,8 +314,9 @@ class Traffic {
   }
 
   near(x, y, reach) {
-    const { cars, all } = this.out;
+    const { cars, people, all } = this.out;
     cars.length = 0;
+    people.length = 0;
     all.length = 0;
     const r = reach + CAR_LENGTH;
     for (const seg of this.segments) {
@@ -212,9 +325,15 @@ class Traffic {
         all.push(seg);
       }
     }
-    const rb = reach + ROAD_WIDTH;
+    const rp = reach + ROAD_WIDTH;
+    for (const seg of this.personSegments) {
+      if (Math.abs(seg.mid.x - x) < rp && Math.abs(seg.mid.y - y) < rp) {
+        if (!seg.sensorOnly) people.push(seg);
+        all.push(seg);
+      }
+    }
     for (const b of this.barriers) {
-      if (Math.abs(b.mid.x - x) < rb && Math.abs(b.mid.y - y) < rb) all.push(b);
+      if (Math.abs(b.mid.x - x) < rp && Math.abs(b.mid.y - y) < rp) all.push(b);
     }
     return this.out;
   }

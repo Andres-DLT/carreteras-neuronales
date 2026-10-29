@@ -6,7 +6,7 @@ const CAR_WIDTH = 26;
 const METERS_PER_UNIT = 4.5 / CAR_LENGTH; // un coche compacto mide unos 4.5 m
 const CELL_SIZE = 40; // rejilla con la que se mide el terreno explorado (3.75 m)
 const IDLE_LIMIT = 150; // fotogramas sin pisar terreno nuevo antes de retirarlo (2.5 s)
-const BRAIN_INPUTS = 9; // 7 sensores + semáforo delante + coche delante
+const BRAIN_INPUTS = 9; // 7 sensores + semáforo delante + coche o peatón delante
 
 // Abanico de rayos hacia delante; cada lectura es la distancia al borde más cercano.
 class Sensor {
@@ -103,19 +103,23 @@ class Car {
       this.crash("choque");
       return;
     }
+    if (this.collides(moving.people)) {
+      this.crash("atropello");
+      return;
+    }
     if (traffic && traffic.ranRed(x0, y0, this.x, this.y)) {
       this.crash("semáforo");
       return;
     }
     this.sensor.update(nearby, moving.all);
-    // 7 distancias + qué tan cerca hay un rojo + qué tan cerca hay otro coche:
-    // sin estas dos, un semáforo se ve igual que la pared de una curva.
+    // 7 distancias + qué tan cerca hay un rojo + qué tan cerca hay un coche o un
+    // peatón: sin estas dos, un semáforo se ve igual que la pared de una curva.
     const inputs = this.sensor.readings.map((r) => (r ? 1 - r.offset : 0));
     let light = 0;
     let car = 0;
     for (const r of this.sensor.readings) {
       if (r && r.kind === "light") light = Math.max(light, 1 - r.offset);
-      if (r && r.kind === "car") car = Math.max(car, 1 - r.offset);
+      if (r && (r.kind === "car" || r.kind === "person")) car = Math.max(car, 1 - r.offset);
     }
     inputs.push(light, car);
     const [forward, left, right, reverse] = NeuralNetwork.feedForward(inputs, this.brain);

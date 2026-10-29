@@ -50,6 +50,14 @@
     --traffic-2: #c9454f;
     --traffic-3: #2f8a83;
     --traffic-4: #55626e;
+    --wall-shade: #1b2430;
+    --trunk: #6b4f35;
+    --ped-head: #3a2a20;
+    --cause-1: #2a78d6;
+    --cause-2: #eb6834;
+    --cause-3: #1baf7a;
+    --cause-4: #eda100;
+    --cause-5: #e87ba4;
     --f-display: "Overpass", "Highway Gothic", "Arial Narrow", system-ui, sans-serif;
     --f-mono: "Overpass Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
     --gutter-l: max(16px, env(safe-area-inset-left, 0px));
@@ -98,6 +106,14 @@
       --traffic-2: #e0636c;
       --traffic-3: #4fb5ad;
       --traffic-4: #8494a3;
+      --wall-shade: #000000;
+      --trunk: #3a2c20;
+      --ped-head: #d9b99a;
+      --cause-1: #3987e5;
+      --cause-2: #d95926;
+      --cause-3: #199e70;
+      --cause-4: #c98500;
+      --cause-5: #d55181;
       color-scheme: dark;
     }
   }
@@ -143,6 +159,14 @@
     --traffic-2: #e0636c;
     --traffic-3: #4fb5ad;
     --traffic-4: #8494a3;
+    --wall-shade: #000000;
+    --trunk: #3a2c20;
+    --ped-head: #d9b99a;
+    --cause-1: #3987e5;
+    --cause-2: #d95926;
+    --cause-3: #199e70;
+    --cause-4: #c98500;
+    --cause-5: #d55181;
     color-scheme: dark;
   }
 
@@ -405,6 +429,52 @@
   .map-item .btn { padding: 8px 10px 6px; font-size: 12px; }
   .empty { margin: 0; font-size: 12.5px; color: var(--muted); }
 
+  .side { max-height: 100%; overflow-y: auto; scrollbar-width: thin; }
+  .view-tools { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+  #view3d { font-family: var(--f-mono); box-shadow: var(--shadow); }
+
+  /* Gráfica de causas: barras apiladas, leyenda con cifras y tooltip. */
+  .chart-wrap { position: relative; }
+  #causes { width: 100%; height: 112px; display: block; touch-action: pan-y; }
+  .chart-tip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px 6px;
+    border-radius: 8px;
+    background: var(--ink);
+    color: var(--bg);
+    font: 400 11.5px var(--f-display);
+    white-space: nowrap;
+    box-shadow: var(--shadow);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .chart-tip strong { font-size: 12px; }
+  .chart-tip span { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .chart-tip i, .causes-legend .swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--swatch);
+    flex: none;
+  }
+  .causes-legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 12px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .causes-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .causes-legend li span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .causes-legend b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+
   button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 
   .toast {
@@ -440,7 +510,8 @@
     .long { display: none; }
     .short { display: inline; }
     .main { flex-direction: column; align-items: stretch; }
-    .scale { order: 2; align-self: flex-start; }
+    .view-tools { order: 2; flex-direction: row; align-items: flex-end; margin-top: auto; }
+    .side { max-height: 55%; }
     .side { width: auto; }
     .sign { padding: 12px 14px 10px; outline-offset: -5px; gap: 6px; }
     .sign-head .gen { font-size: 22px; }
@@ -481,9 +552,12 @@
     </header>
 
     <div class="main">
-      <div class="scale" aria-hidden="true">
-        <span id="scale-label">20 m</span>
-        <span class="scale-bar" id="scale-bar"></span>
+      <div class="view-tools">
+        <div class="scale" aria-hidden="true">
+          <span id="scale-label">20 m</span>
+          <span class="scale-bar" id="scale-bar"></span>
+        </div>
+        <button class="btn" id="view3d" aria-pressed="false" aria-label="Vista 3D de edificios y árboles">3D</button>
       </div>
 
       <div class="side train-only">
@@ -510,7 +584,19 @@
             <span class="legend"><i class="pos">+</i> / <i class="neg">−</i> pesos</span>
           </div>
           <canvas id="net" aria-hidden="true"></canvas>
-          <span class="legend">7 sensores + rojo + coche delante → 6 neuronas → acelerar, girar, frenar</span>
+          <span class="legend">7 sensores + rojo + obstáculo delante → 6 neuronas → acelerar, girar, frenar</span>
+        </section>
+
+        <section class="card" id="causes-card" aria-label="Causas de eliminación por generación">
+          <div class="card-head">
+            <strong>Por qué se eliminan</strong>
+            <span class="legend">% de coches · últimas 30 gen.</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="causes" aria-hidden="true"></canvas>
+            <div class="chart-tip" id="causes-tip" role="status" hidden></div>
+          </div>
+          <ul class="causes-legend" id="causes-legend" aria-label="Última generación"></ul>
         </section>
       </div>
     </div>
@@ -528,6 +614,7 @@
           <button class="btn" id="next"><span class="long">Siguiente generación</span><span class="short">Siguiente</span></button>
           <button class="btn" id="follow" aria-pressed="true"><span class="long">Seguir al líder</span><span class="short">Líder</span></button>
           <button class="btn" id="toggle-brain" aria-pressed="true">Cerebro</button>
+          <button class="btn" id="toggle-causes" aria-pressed="true">Bajas</button>
           <button class="btn" id="toggle-settings" aria-expanded="false" aria-controls="settings">Ajustes</button>
         </div>
         <div class="settings" id="settings" hidden>
@@ -549,6 +636,10 @@
           <div class="field">
             <label class="check" for="lights"><input type="checkbox" id="lights" checked> Semáforos en los cruces</label>
             <small>Pasarse un rojo elimina al coche. Se aplica en la siguiente generación.</small>
+          </div>
+          <div class="field">
+            <label class="check" for="pedestrians"><input type="checkbox" id="pedestrians" checked> Peatones en los pasos de cebra</label>
+            <small>Cruzan con el semáforo de los coches en rojo, o cada 12 s en mitad de las calles largas. Atropellar elimina al coche.</small>
           </div>
           <div class="field">
             <button class="btn danger" id="forget">Olvidar lo aprendido</button>
@@ -578,6 +669,15 @@
             <span class="group-k">Guardados en este navegador</span>
             <ul class="map-list" id="map-list"></ul>
             <p class="empty" id="maps-empty">Todavía no hay mapas guardados. Ponle nombre al actual y guárdalo.</p>
+          </div>
+          <div class="map-group">
+            <span class="group-k">Archivo</span>
+            <div class="row">
+              <button class="btn" id="export-map" type="button">Exportar mapa</button>
+              <button class="btn" id="import-map" type="button">Importar mapa</button>
+              <input type="file" id="import-file" accept=".json,application/json" hidden>
+            </div>
+            <small class="empty">El archivo incluye el cerebro entrenado en ese mapa, si lo hay.</small>
           </div>
           <div class="map-group">
             <span class="group-k">Plantillas</span>
