@@ -82,3 +82,9 @@ se retira, salvo si está esperando ante un rojo o detrás de otro coche.
 
 El mapa activo, los mapas guardados, el mejor cerebro y el récord se guardan en el
 navegador (`localStorage`).
+
+## Si te interesa el tema
+
+Radu Mariescu-Istodor tiene dos cursos gratuitos en JavaScript puro sobre ideas parecidas:
+un [coche autónomo con red neuronal](https://github.com/gniziemazity/Self-driving-car) y un
+[editor de mundo virtual](https://github.com/gniziemazity/virtual-world).
