@@ -16,12 +16,13 @@ function generateScenery(graph) {
   const segments = graph.segments;
   if (!segments.length) return { buildings: [], trees: [] };
   const rng = seededRandom(mapSeed(graph));
-  const R = ROAD_WIDTH / 2;
-  const clearOfRoads = (p, margin) => segments.every((s) => projectOnSegment(p, s.a, s.b).dist > R + margin);
+  const clearOfRoads = (p, margin) => segments.every((s) => projectOnSegment(p, s.a, s.b).dist > roadHalf(s) + margin);
 
   // Manzanas: rectángulos a ambos lados de cada tramo, de frente a la calle.
   const buildings = [];
-  for (const { a, b } of segments) {
+  for (const segment of segments) {
+    const { a, b } = segment;
+    const half = roadHalf(segment);
     const len = distance(a, b);
     if (len < 90) continue;
     const u = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
@@ -30,7 +31,7 @@ function generateScenery(graph) {
       for (let t = 45 + rng() * 30; t < len - 45; t += 115 + rng() * 45) {
         const w = 64 + rng() * 52; // fachada
         const d = 56 + rng() * 54; // fondo
-        const off = (R + 22 + d / 2) * side;
+        const off = (half + 22 + d / 2) * side;
         const c = { x: a.x + u.x * t + n.x * off, y: a.y + u.y * t + n.y * off };
         const corners = [
           [-w / 2, -d / 2],

@@ -3,15 +3,31 @@
 // Los tramos guardan referencias a los propios objetos punto, así mover un punto
 // arrastra todos los tramos que salen de él.
 
+// Tipos de tramo. Los de sentido único (y la glorieta) se recorren de a hacia b.
+const ROAD_TYPES = {
+  normal: { name: "Calle", width: 100, oneway: false },
+  avenida: { name: "Avenida", width: 160, oneway: false },
+  unico: { name: "Sentido único", width: 100, oneway: true },
+  glorieta: { name: "Glorieta", width: 100, oneway: true },
+  puente: { name: "Puente", width: 100, oneway: false },
+};
+const roadType = (segment) => ROAD_TYPES[segment.type] || ROAD_TYPES.normal;
+const roadHalf = (segment) => roadType(segment).width / 2;
+
 class Graph {
   constructor(points = [], segments = []) {
     this.points = points;
     this.segments = segments;
   }
 
+  // Cada tramo es [i, j] o [i, j, tipo] (los mapas antiguos no tienen tipo).
   static fromJSON(data) {
     const points = data.points.map(([x, y]) => ({ x, y }));
-    const segments = data.segments.map(([i, j]) => ({ a: points[i], b: points[j] }));
+    const segments = data.segments.map(([i, j, type]) => ({
+      a: points[i],
+      b: points[j],
+      type: ROAD_TYPES[type] ? type : "normal",
+    }));
     return new Graph(points, segments);
   }
 
@@ -19,7 +35,10 @@ class Graph {
     const index = new Map(this.points.map((p, i) => [p, i]));
     return {
       points: this.points.map((p) => [Math.round(p.x), Math.round(p.y)]),
-      segments: this.segments.map((s) => [index.get(s.a), index.get(s.b)]),
+      segments: this.segments.map((s) => {
+        const pair = [index.get(s.a), index.get(s.b)];
+        return s.type && s.type !== "normal" ? [...pair, s.type] : pair;
+      }),
     };
   }
 
@@ -32,9 +51,9 @@ class Graph {
     return this.segments.some((s) => (s.a === a && s.b === b) || (s.a === b && s.b === a));
   }
 
-  addSegment(a, b) {
+  addSegment(a, b, type = "normal") {
     if (a === b || this.hasSegment(a, b)) return false;
-    this.segments.push({ a, b });
+    this.segments.push({ a, b, type });
     return true;
   }
 
@@ -82,12 +101,13 @@ class Graph {
     return best;
   }
 
-  // Parte un tramo en dos con un punto nuevo; sirve para crear cruces.
+  // Parte un tramo en dos con un punto nuevo (sirve para crear cruces); las dos
+  // mitades conservan el tipo y el sentido del original.
   splitSegment(segment, at) {
     const p = this.addPoint({ x: at.x, y: at.y });
     this.removeSegment(segment);
-    this.addSegment(segment.a, p);
-    this.addSegment(p, segment.b);
+    this.addSegment(segment.a, p, segment.type);
+    this.addSegment(p, segment.b, segment.type);
     return p;
   }
 

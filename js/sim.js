@@ -36,7 +36,7 @@ class Simulation {
 
   // Carga un entrenamiento (el de otro mapa, uno importado o uno vacío) y empieza
   // una generación con él.
-  adopt({ brain = null, record = 0, history = [], causes = [], generation = 1 } = {}) {
+  adopt({ brain = null, record = 0, history = [], causes = [], generation = 1, stale = 0 } = {}) {
     // Un cerebro guardado con otra cantidad de entradas (versiones anteriores) no sirve.
     if (brain && brain.levels[0].inputs.length !== BRAIN_INPUTS) brain = null;
     this.brain = brain; // mejor cerebro conocido
@@ -44,29 +44,47 @@ class Simulation {
     this.history = brain ? [...history] : []; // mejor resultado de cada generación
     this.causes = brain ? [...causes] : []; // cuántos coches cayeron por cada causa, por generación
     this.generation = brain ? generation : 1;
-    this.stale = 0;
+    this.stale = brain ? stale : 0; // generaciones seguidas sin mejorar el récord
+    this.parents = null; // se eligen al terminar la primera generación
     this.spawn();
   }
 
   training() {
-    return { brain: this.brain, record: this.record, history: this.history, causes: this.causes, generation: this.generation };
+    return {
+      brain: this.brain,
+      record: this.record,
+      history: this.history,
+      causes: this.causes,
+      generation: this.generation,
+      stale: this.stale,
+    };
   }
 
-  // Coche 0: copia exacta del mejor. Los demás mutan con intensidad creciente
-  // (de ¼ a 2 veces la elegida) y el último 10 % son cerebros nuevos al azar.
-  // Si el récord lleva varias generaciones sin mejorar, se explora más.
+  // Coche 0: copia exacta del mejor. Hasta el 40 % mutan al mejor con intensidad
+  // creciente (de ¼ a 2 veces la elegida); hasta el 85 % son hijos de cruzar dos de
+  // los 5 mejores de la generación anterior, con una mutación suave; el resto (10 %
+  // o más) son cerebros nuevos al azar. Si el récord se estanca, se explora más.
   spawn() {
     const { x, y, angle } = this.world.start;
+    const n = this.count;
     const boost = Math.min(this.stale || 0, 5);
-    const fresh = Math.floor(this.count * (0.1 + boost * 0.06));
+    const fresh = Math.floor(n * (0.1 + boost * 0.06));
     const mutation = this.mutation * (1 + boost * 0.4);
+    const mutantsEnd = Math.floor(n * 0.4);
+    const crossEnd = Math.min(Math.floor(n * 0.85), n - fresh);
+    const parents = this.parents && this.parents.length ? this.parents : null;
+    const pick = () => parents[Math.floor(Math.random() * parents.length)];
     this.cars = [];
-    for (let i = 0; i < this.count; i++) {
+    for (let i = 0; i < n; i++) {
       let brain = null;
-      if (this.brain && i < this.count - fresh) {
-        brain = NeuralNetwork.clone(this.brain);
-        const spread = 0.25 + 1.75 * (i / Math.max(1, this.count - fresh - 1));
-        if (i > 0) NeuralNetwork.mutate(brain, Math.min(1, mutation * spread));
+      if (this.brain && i < n - fresh) {
+        if (parents && i >= mutantsEnd && i < crossEnd) {
+          brain = NeuralNetwork.mutate(NeuralNetwork.crossover(pick(), pick()), Math.min(1, mutation * 0.5));
+        } else {
+          brain = NeuralNetwork.clone(this.brain);
+          const spread = 0.25 + 1.75 * (i / Math.max(1, n - fresh - 1));
+          if (i > 0) NeuralNetwork.mutate(brain, Math.min(1, mutation * spread));
+        }
       }
       this.cars.push(new Car(x, y, angle, brain));
     }
@@ -91,7 +109,7 @@ class Simulation {
     let leaderScore = -Infinity;
     if (this.traffic) this.traffic.update();
     for (const car of this.cars) {
-      car.update(this.world.grid, this.scratch, this.traffic);
+      car.update(this.world, this.scratch, this.traffic);
       if (!car.damaged) alive++;
       const score = Simulation.score(car);
       if (score > leaderScore) {
@@ -106,6 +124,11 @@ class Simulation {
   }
 
   endGeneration() {
+    // Los 5 mejores de esta generación serán los padres de los cruces.
+    this.parents = [...this.cars]
+      .sort((a, b) => Simulation.score(b) - Simulation.score(a))
+      .slice(0, 5)
+      .map((car) => NeuralNetwork.clone(car.brain));
     const best = this.leader;
     const fitness = best.cells.size;
     const improved = fitness > this.record;

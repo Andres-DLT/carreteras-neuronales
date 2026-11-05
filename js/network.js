@@ -1,7 +1,9 @@
 "use strict";
 // Red neuronal de propagación hacia delante, sin entrenamiento por gradiente:
-// aprende por evolución (copiar al mejor y mutar sus pesos).
+// aprende por evolución (copiar y cruzar a los mejores y mutar sus pesos).
 // Cada neurona se activa (1) si la suma ponderada supera su umbral, si no vale 0.
+// (Probé salidas continuas para girar de forma gradual: en la ciudad grande
+// aprendían peor, así que todas las neuronas siguen siendo de 0 o 1.)
 
 class Level {
   constructor(inputCount, outputCount) {
@@ -56,6 +58,17 @@ class NeuralNetwork {
       }
     }
     return network;
+  }
+
+  // Hijo de dos padres: cada peso y cada umbral se hereda de uno de los dos al azar.
+  static crossover(a, b) {
+    const child = NeuralNetwork.clone(a);
+    child.levels.forEach((level, li) => {
+      const other = b.levels[li];
+      level.biases = level.biases.map((v, j) => (Math.random() < 0.5 ? v : other.biases[j]));
+      level.weights = level.weights.map((row, i) => row.map((v, j) => (Math.random() < 0.5 ? v : other.weights[i][j])));
+    });
+    return child;
   }
 
   static clone(network) {

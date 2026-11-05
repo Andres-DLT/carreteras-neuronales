@@ -25,6 +25,9 @@
       "o el último otra vez para terminar el tramo. <b>Arrastra</b> un punto para moverlo y el fondo para desplazarte.",
     erase: "<b>Toca</b> un punto o un tramo de carretera para borrarlo.",
     start: "<b>Toca</b> una carretera para poner la salida. Tócala otra vez para invertir el sentido.",
+    type:
+      "<b>Toca</b> un tramo para cambiar su tipo: calle → avenida → sentido único (en un sentido y en el otro) → " +
+      "puente → calle. Un puente cruza por encima de otras calles sin formar cruce.",
   };
 
   const storage = {
@@ -190,7 +193,7 @@
     },
     get(key) {
       const entry = this.all()[key];
-      return entry && validBrain(entry.brain) ? entry : null;
+      return entry && entry.record > 0 && validBrain(entry.brain) ? entry : null;
     },
     write(all) {
       try {
@@ -200,7 +203,7 @@
       }
     },
     put(key, training) {
-      if (!training.brain) return;
+      if (!training.brain || !training.record) return; // nada que recordar todavía
       const all = this.all();
       all[key] = { ...training, savedAt: Date.now() };
       const keys = Object.keys(all).sort((a, b) => all[b].savedAt - all[a].savedAt);
@@ -250,6 +253,7 @@
 
   // ---------- Modos ----------
   function setMode(mode) {
+    if (mode !== "train") stopTurbo();
     if (mode === "train") {
       if (ui.needsBuild) buildWorld();
       if (!world.graph.segments.length) {
@@ -301,7 +305,14 @@
   function loop() {
     if (ui.needsBuild) buildWorld();
     if (ui.mode === "train") {
-      if (ui.playing) for (let i = 0; i < ui.speed; i++) sim.step();
+      if (turbo.on) {
+        // Sin Web Worker (p. ej. abriendo el archivo directamente): turbo en este
+        // hilo, con un presupuesto de tiempo por fotograma para no congelar la página.
+        if (turbo.fallback) {
+          const start = performance.now();
+          while (turbo.on && performance.now() - start < 12) sim.step();
+        }
+      } else if (ui.playing) for (let i = 0; i < ui.speed; i++) sim.step();
       if (ui.follow) {
         const ease = 1 - Math.pow(0.88, ui.speed); // a más velocidad, la cámara alcanza antes al líder
         view.x = lerp(view.x, sim.leader.x, ease);
@@ -314,10 +325,83 @@
   }
 
   function onGeneration({ generation, fitness, improved }) {
-    if (improved && generation > 1) toast(`Generación ${generation}: nuevo récord, ${meters(fitness)}`);
+    if (turbo.on) turbo.gens++;
+    else if (improved && generation > 1) toast(`Generación ${generation}: nuevo récord, ${meters(fitness)}`);
     if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
     chartsDirty = true;
     persistSoon();
+  }
+
+  // ---------- Entrenamiento turbo ----------
+  // La simulación corre en un Web Worker sin dibujar; aquí solo se recibe el
+  // entrenamiento al final de cada generación y se muestran las cifras.
+  const turbo = { on: false, worker: null, fallback: false, started: 0, gens: 0, mapKey: null };
+
+  const simSettings = () => ({
+    count: sim.count,
+    mutation: sim.mutation,
+    trafficCount: sim.trafficCount,
+    lights: sim.lights,
+    pedestrians: sim.pedestrians,
+  });
+
+  function startTurbo() {
+    if (ui.mode !== "train" || turbo.on) return;
+    Object.assign(turbo, { on: true, fallback: false, started: performance.now(), gens: 0, mapKey: ui.trainedKey });
+    const s = simSettings();
+    const options = { count: s.count, mutation: s.mutation, traffic: s.trafficCount, lights: s.lights, pedestrians: s.pedestrians };
+    try {
+      const worker = new Worker("js/worker.js");
+      worker.onmessage = (e) => onTurboMessage(e.data);
+      worker.onerror = (e) => {
+        e.preventDefault();
+        useTurboFallback();
+      };
+      worker.postMessage({ type: "start", map: currentMapData(), training: sim.training(), options });
+      turbo.worker = worker;
+    } catch {
+      useTurboFallback();
+    }
+    syncControls();
+  }
+
+  function useTurboFallback() {
+    if (turbo.worker) turbo.worker.terminate();
+    turbo.worker = null;
+    turbo.fallback = true;
+  }
+
+  function onTurboMessage(msg) {
+    // Si el mapa cambió mientras tanto, ese entrenamiento ya no corresponde.
+    const sameMap = turbo.mapKey === ui.trainedKey && !ui.mapChanged;
+    if (msg.type === "generation" && sameMap) {
+      sim.adopt(msg.training);
+      onGeneration({ generation: msg.training.generation - 1, fitness: msg.fitness, improved: msg.improved });
+    } else if (msg.type === "stopped") {
+      if (msg.training && sameMap) sim.adopt(msg.training);
+      finishTurbo();
+    }
+  }
+
+  function stopTurbo() {
+    if (!turbo.on) return;
+    if (turbo.worker) turbo.worker.postMessage({ type: "stop" }); // responde con "stopped"
+    else finishTurbo();
+  }
+
+  function finishTurbo() {
+    if (turbo.worker) turbo.worker.terminate();
+    const seconds = Math.max(1, Math.round((performance.now() - turbo.started) / 1000));
+    const gens = turbo.gens;
+    Object.assign(turbo, { on: false, worker: null, fallback: false });
+    toast(`Turbo: ${gens} generaciones en ${seconds} s · récord ${meters(sim.record)}`);
+    chartsDirty = true;
+    syncControls();
+    persist();
+  }
+
+  function sendTurboSettings() {
+    if (turbo.worker) turbo.worker.postMessage({ type: "settings", settings: simSettings() });
   }
 
   const meters = (cells) => `${Math.round(cells * CELL_SIZE * METERS_PER_UNIT)} m`;
@@ -336,10 +420,13 @@
     drawStopLines();
     drawStart();
     // Los coches van antes que el paisaje: en 3D los edificios altos pueden taparlos.
+    // Los puentes tapan lo que pasa por debajo y quedan bajo lo que circula por encima.
     if (ui.mode === "train") {
-      drawCars();
+      drawCars(false);
       drawPedestrians();
     }
+    world.drawBridges(ctx, colors);
+    if (ui.mode === "train") drawCars(true);
     if (ui.view3d) drawScenery3D(ctx, world.scenery, colors, { x: view.x, y: view.y });
     else {
       drawBuildings(ctx, world.scenery.buildings, colors);
@@ -526,18 +613,23 @@
     }
   }
 
-  function drawCars() {
+  // onBridge: false pinta los coches a ras de suelo; true, los que van por un puente
+  // (que se pintan después del tablero para quedar encima).
+  function drawCars(onBridge) {
     const leader = sim.leader;
+    const here = (car) => !!car.level === onBridge;
     if (sim.traffic) {
-      for (const car of sim.traffic.cars) paintCar(car, colors.traffic[car.color], true, car.speed < 0.4);
+      for (const car of sim.traffic.cars) if (here(car)) paintCar(car, colors.traffic[car.color], true, car.speed < 0.4);
     }
     ctx.globalAlpha = 0.28;
     for (const car of sim.cars) {
-      if (car !== leader) paintCar(car, car.damaged ? colors.wreck : colors.car, false);
+      if (car !== leader && here(car)) paintCar(car, car.damaged ? colors.wreck : colors.car, false);
     }
     ctx.globalAlpha = 1;
-    drawSensors(leader);
-    paintCar(leader, leader.damaged ? colors.wreck : colors.leader, true);
+    if (here(leader)) {
+      drawSensors(leader);
+      paintCar(leader, leader.damaged ? colors.wreck : colors.leader, true);
+    }
   }
 
   function roundedRect(c, x, y, w, h, r) {
@@ -656,7 +748,8 @@
         c.lineWidth = 1.5;
         c.strokeStyle = colors.muted;
         c.stroke();
-        if (v > 0) {
+        if (v > 0.02) {
+          // Las entradas son continuas (la intensidad muestra el valor); las demás, 0 o 1.
           c.globalAlpha = li === 0 ? Math.max(0.25, v) : 1;
           c.fillStyle = li === 0 ? colors.leader : colors.accent;
           c.fill();
@@ -669,7 +762,7 @@
     c.textBaseline = "middle";
     const out = ys(4);
     OUTPUT_LABELS.forEach((label, j) => {
-      c.fillStyle = layers[layers.length - 1][j] ? colors.ink : colors.muted;
+      c.fillStyle = layers[layers.length - 1][j] > 0.5 ? colors.ink : colors.muted;
       c.fillText(label, right + 12, out[j] + 1);
     });
   }
@@ -743,6 +836,15 @@
     setText(els.best, meters(leader.cells.size));
     setText(els.record, meters(sim.record));
     setText(els.kmh, `${Math.round(leader.kmh)} km/h`);
+    if (turbo.on) {
+      const seconds = (performance.now() - turbo.started) / 1000;
+      const rate = seconds > 0.5 ? (turbo.gens / seconds).toFixed(1).replace(".", ",") : "–";
+      const where = turbo.fallback ? "en esta pestaña" : "en segundo plano";
+      setText(
+        $("#turbo-status"),
+        `Turbo ${where}: ${turbo.gens} generaciones · ${rate} por segundo. Los coches se ven parados en la salida mientras tanto.`
+      );
+    }
     if (sim.history.length !== lastSparkLength || tick < 12 || chartsDirty) {
       lastSparkLength = sim.history.length;
       drawSpark();
@@ -1112,15 +1214,63 @@
         toast("Toca sobre una carretera para poner la salida.");
         return;
       }
+      if (near.segment.type === "puente") {
+        toast("La salida tiene que estar a ras de suelo, no sobre un puente.");
+        return;
+      }
       const { a, b } = near.segment;
       world.start = { x: near.point.x, y: near.point.y, angle: Math.atan2(b.y - a.y, b.x - a.x) };
       mapEdited();
+    } else if (ui.tool === "type") {
+      const near = g.nearestSegment(at, ROAD_WIDTH / 2);
+      if (!near) {
+        toast("Toca sobre un tramo para cambiar su tipo.");
+        return;
+      }
+      toast(cycleRoadType(near.segment));
+      mapEdited();
     }
+  }
+
+  // Siguiente tipo para un tramo. El sentido único pasa dos veces: primero en el
+  // sentido en que se dibujó el tramo y luego al revés (intercambiando sus extremos).
+  function cycleRoadType(s) {
+    const len = distance(s.a, s.b);
+    const canBridge = len >= RAMP_LENGTH * 2 + 80;
+    if (s.type === "avenida") {
+      s.type = "unico";
+      s.flipped = false;
+      return "Sentido único: los coches circulan en el sentido de las flechas.";
+    }
+    if (s.type === "unico" && !s.flipped) {
+      [s.a, s.b] = [s.b, s.a];
+      s.flipped = true;
+      return "Sentido único, ahora en el sentido contrario.";
+    }
+    if (s.type === "unico") {
+      if (canBridge) {
+        s.type = "puente";
+        return "Puente: pasa por encima de las calles que cruza.";
+      }
+      s.type = "normal";
+      return "Calle normal (este tramo es demasiado corto para ser puente).";
+    }
+    if (s.type === "normal" || !s.type) {
+      s.type = "avenida";
+      return "Avenida: cuatro carriles, dos por sentido.";
+    }
+    s.type = "normal"; // puente o glorieta
+    return "Calle normal de doble sentido.";
   }
 
   // ---------- Controles ----------
   function syncControls() {
     $("#play").textContent = ui.playing ? "Pausa" : "Seguir";
+    $("#turbo").setAttribute("aria-pressed", String(turbo.on));
+    $("#turbo").textContent = turbo.on ? "Detener turbo" : "Turbo";
+    for (const id of ["#play", "#next"]) $(id).disabled = turbo.on;
+    $$("[data-speed]").forEach((b) => (b.disabled = turbo.on));
+    $("#turbo-status").hidden = !turbo.on;
     $$("[data-speed]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === ui.speed)));
     $$("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === ui.tool)));
     $("#follow").setAttribute("aria-pressed", String(ui.follow));
@@ -1158,6 +1308,7 @@
     })
   );
   $("#next").addEventListener("click", () => sim.endGeneration());
+  $("#turbo").addEventListener("click", () => (turbo.on ? stopTurbo() : startTurbo()));
   $("#follow").addEventListener("click", () => setFollow(!ui.follow));
   $("#toggle-brain").addEventListener("click", () => {
     ui.showBrain = !ui.showBrain;
@@ -1172,11 +1323,13 @@
   $("#count").addEventListener("input", (e) => {
     sim.count = Number(e.target.value);
     $("#count-out").textContent = sim.count;
+    sendTurboSettings();
     persistSoon();
   });
   $("#mutation").addEventListener("input", (e) => {
     sim.mutation = Number(e.target.value) / 100;
     $("#mutation-out").textContent = `${e.target.value} %`;
+    sendTurboSettings();
     persistSoon();
   });
 
@@ -1201,6 +1354,10 @@
     });
   }
   armed($("#forget"), "Toca otra vez para olvidar", () => {
+    if (turbo.on) {
+      turbo.mapKey = null; // lo que devuelva el turbo ya no se aplica
+      stopTurbo();
+    }
     sim.forget();
     if (ui.trainedKey) brainStore.remove(ui.trainedKey);
     chartsDirty = true;
@@ -1227,14 +1384,17 @@
   $("#traffic").addEventListener("input", (e) => {
     sim.trafficCount = Number(e.target.value);
     $("#traffic-out").textContent = trafficLabel(sim.trafficCount);
+    sendTurboSettings();
     persistSoon();
   });
   $("#lights").addEventListener("change", (e) => {
     sim.lights = e.target.checked;
+    sendTurboSettings();
     persistSoon();
   });
   $("#pedestrians").addEventListener("change", (e) => {
     sim.pedestrians = e.target.checked;
+    sendTurboSettings();
     persistSoon();
   });
   $("#toggle-causes").addEventListener("click", () => {
@@ -1385,7 +1545,12 @@
     if (m.points.length > 5000 || m.segments.length > 10000 || !m.segments.length) return false;
     if (!m.points.every((p) => Array.isArray(p) && p.length === 2 && p.every(finite))) return false;
     const n = m.points.length;
-    if (!m.segments.every((s) => Array.isArray(s) && s.length === 2 && s.every((i) => Number.isInteger(i) && i >= 0 && i < n) && s[0] !== s[1])) return false;
+    const validSegment = (s) =>
+      Array.isArray(s) &&
+      (s.length === 2 || (s.length === 3 && ROAD_TYPES[s[2]])) &&
+      [s[0], s[1]].every((i) => Number.isInteger(i) && i >= 0 && i < n) &&
+      s[0] !== s[1];
+    if (!m.segments.every(validSegment)) return false;
     return finite(m.start.x) && finite(m.start.y) && finite(m.start.angle);
   }
 
@@ -1406,6 +1571,13 @@
     } catch {
       toast("Ese archivo no es un mapa válido de Carreteras Neuronales.");
     }
+  });
+
+  $("#random-city").addEventListener("click", () => {
+    const data = randomCityData();
+    openMap(data);
+    $("#map-name").value = `Ciudad ${data.seed % 100000}`;
+    toast(`Ciudad al azar n.º ${data.seed % 100000}. Guárdala en «Mis mapas» si te gusta.`);
   });
 
   $$("[data-template]").forEach((b) =>

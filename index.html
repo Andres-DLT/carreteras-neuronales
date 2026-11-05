@@ -1,3 +1,5 @@
+<!doctype html>
+<html lang="es">
 <meta charset="utf-8">
 <title>Carreteras Neuronales</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -379,6 +381,7 @@
   .btn.danger { color: var(--danger); }
   .btn.armed { background: var(--danger); border-color: var(--danger); color: var(--panel); }
   .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  #turbo[aria-pressed="true"] { background: var(--amber); border-color: var(--amber); color: var(--sig-box); }
   .btn:disabled { opacity: 0.45; cursor: default; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; background: var(--panel); }
   .seg button { border: 0; padding: 8px 11px 6px; border-radius: 7px; background: transparent; color: var(--muted); }
@@ -611,12 +614,14 @@
             <button data-speed="4" aria-pressed="false">×4</button>
             <button data-speed="8" aria-pressed="false">×8</button>
           </div>
+          <button class="btn" id="turbo" aria-pressed="false">Turbo</button>
           <button class="btn" id="next"><span class="long">Siguiente generación</span><span class="short">Siguiente</span></button>
           <button class="btn" id="follow" aria-pressed="true"><span class="long">Seguir al líder</span><span class="short">Líder</span></button>
           <button class="btn" id="toggle-brain" aria-pressed="true">Cerebro</button>
           <button class="btn" id="toggle-causes" aria-pressed="true">Bajas</button>
           <button class="btn" id="toggle-settings" aria-expanded="false" aria-controls="settings">Ajustes</button>
         </div>
+        <p class="hint" id="turbo-status" role="status" hidden></p>
         <div class="settings" id="settings" hidden>
           <div class="field">
             <label for="count">Coches por generación <output id="count-out" for="count">120</output></label>
@@ -654,6 +659,7 @@
             <button data-tool="add" aria-pressed="true">Trazar</button>
             <button data-tool="erase" aria-pressed="false">Borrar</button>
             <button data-tool="start" aria-pressed="false">Salida</button>
+            <button data-tool="type" aria-pressed="false">Tipo</button>
           </div>
           <button class="btn" id="finish" disabled><span class="long">Terminar tramo</span><span class="short">Terminar</span></button>
           <button class="btn" id="toggle-maps" aria-expanded="false" aria-controls="maps">Mis mapas</button>
@@ -684,6 +690,10 @@
             <div class="row">
               <button class="btn" data-template="circuito">Circuito</button>
               <button class="btn" data-template="cuadricula">Cuadrícula</button>
+              <button class="btn" data-template="glorieta">Glorieta</button>
+              <button class="btn" data-template="montana">Montaña</button>
+              <button class="btn" data-template="ciudad">Ciudad grande</button>
+              <button class="btn primary" id="random-city">Ciudad al azar</button>
             </div>
           </div>
         </div>
@@ -702,5 +712,6 @@
 <script src="js/car.js"></script>
 <script src="js/traffic.js"></script>
 <script src="js/scenery.js"></script>
+<script src="js/maps.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/app.js"></script>

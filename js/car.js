@@ -75,9 +75,10 @@ class Car {
     this.reason = null;
     this.sensor = new Sensor(this);
     this.brain = brain || new NeuralNetwork([BRAIN_INPUTS, 6, 4]);
-    this.controls = { forward: false, left: false, right: false, reverse: false };
+    this.controls = { forward: false, reverse: false, steer: 0 }; // steer: -1 izquierda … 1 derecha
     this.cells = new Set();
     this.idle = 0;
+    this.level = null; // null = a ras de suelo; si no, el puente por el que va
     this.polygon = this.createPolygon();
     this.explore();
   }
@@ -90,15 +91,19 @@ class Car {
     return Math.abs(this.speed) * 60 * METERS_PER_UNIT * 3.6;
   }
 
-  update(grid, scratch, traffic = null) {
+  update(world, scratch, traffic = null) {
     if (this.damaged) return;
     const x0 = this.x;
     const y0 = this.y;
     this.move();
+    this.updateLevel(world);
     this.polygon = this.createPolygon();
     const reach = this.sensor.rayLength + CAR_LENGTH;
-    const nearby = grid.query(this.x - reach, this.y - reach, this.x + reach, this.y + reach, scratch);
-    const moving = traffic ? traffic.near(this.x, this.y, reach) : NO_TRAFFIC;
+    // Sobre un puente solo cuentan sus barandillas; abajo, los bordes de las calles.
+    const nearby = this.level
+      ? this.level.sides
+      : world.grid.query(this.x - reach, this.y - reach, this.x + reach, this.y + reach, scratch);
+    const moving = traffic ? traffic.near(this.x, this.y, reach, this.level) : NO_TRAFFIC;
     if (this.collides(nearby) || this.collides(moving.cars)) {
       this.crash("choque");
       return;
@@ -107,7 +112,7 @@ class Car {
       this.crash("atropello");
       return;
     }
-    if (traffic && traffic.ranRed(x0, y0, this.x, this.y)) {
+    if (traffic && !this.level && traffic.ranRed(x0, y0, this.x, this.y)) {
       this.crash("semáforo");
       return;
     }
@@ -123,10 +128,32 @@ class Car {
     }
     inputs.push(light, car);
     const [forward, left, right, reverse] = NeuralNetwork.feedForward(inputs, this.brain);
-    Object.assign(this.controls, { forward: !!forward, left: !!left, right: !!right, reverse: !!reverse });
+    // Si se activan a la vez la neurona de izquierda y la de derecha, se anulan.
+    const steer = right - left;
+    Object.assign(this.controls, { forward: forward > 0.5, reverse: reverse > 0.5, steer });
     // Esperar ante un rojo o detrás de otro coche no cuenta como estar atascado.
     this.explore(light > 0 || car > 0.4);
     if (this.idle > IDLE_LIMIT) this.crash("atascado");
+  }
+
+  // Sube a un puente al entrar por uno de sus extremos en la dirección del puente,
+  // y baja al salir de su tablero. Pasar por debajo no cambia de nivel.
+  updateLevel(world) {
+    if (this.level) {
+      if (!pointInPolygon(this, this.level.envelope)) this.level = null;
+      return;
+    }
+    for (const bridge of world.bridges) {
+      if (!pointInPolygon(this, bridge.envelope)) continue;
+      const { a } = bridge.segment;
+      const along = (this.x - a.x) * bridge.u.x + (this.y - a.y) * bridge.u.y;
+      const fromEnd = Math.min(along, bridge.len - along);
+      const aligned = Math.abs(Math.cos(this.angle) * bridge.u.x + Math.sin(this.angle) * bridge.u.y) > 0.7;
+      if (aligned && fromEnd > 15 && fromEnd < RAMP_LENGTH + 40) {
+        this.level = bridge;
+        return;
+      }
+    }
   }
 
   move() {
@@ -137,10 +164,9 @@ class Car {
     if (this.speed > 0) this.speed -= this.friction;
     if (this.speed < 0) this.speed += this.friction;
     if (Math.abs(this.speed) < this.friction) this.speed = 0;
-    if (this.speed !== 0) {
+    if (this.speed !== 0 && c.steer) {
       const flip = this.speed > 0 ? 1 : -1;
-      if (c.left) this.angle -= this.turnRate * flip;
-      if (c.right) this.angle += this.turnRate * flip;
+      this.angle += this.turnRate * c.steer * flip;
     }
     this.x += Math.cos(this.angle) * this.speed;
     this.y += Math.sin(this.angle) * this.speed;
