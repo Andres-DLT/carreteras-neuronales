@@ -322,6 +322,7 @@
   .sign-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .sign-head .k { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.85; }
   .sign-head .gen { font-size: 30px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .sign .heat { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; margin-top: -4px; opacity: 0.9; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 0; }
   .stat { display: grid; gap: 1px; min-width: 0; }
   .stat dt { font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; opacity: 0.8; }
@@ -435,6 +436,17 @@
   .side { max-height: 100%; overflow-y: auto; scrollbar-width: thin; }
   .view-tools { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
   #view3d { font-family: var(--f-mono); box-shadow: var(--shadow); }
+  .osm-credit {
+    font: 600 11px var(--f-display);
+    color: var(--ink);
+    background: var(--panel-glass);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 7px 3px;
+    text-decoration: none;
+  }
+  .osm-credit:hover { text-decoration: underline; }
+  .map-group small a { color: inherit; }
 
   /* Gráfica de causas: barras apiladas, leyenda con cifras y tooltip. */
   .chart-wrap { position: relative; }
@@ -561,6 +573,7 @@
           <span class="scale-bar" id="scale-bar"></span>
         </div>
         <button class="btn" id="view3d" aria-pressed="false" aria-label="Vista 3D de edificios y árboles">3D</button>
+        <a class="osm-credit" id="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" hidden>Calles © OpenStreetMap</a>
       </div>
 
       <div class="side train-only">
@@ -569,6 +582,7 @@
             <span class="k">Generación</span>
             <span class="gen" id="s-gen">1</span>
           </div>
+          <span class="heat" id="s-heat" hidden></span>
           <dl class="stats">
             <div class="stat"><dt>En pista</dt><dd id="s-alive">0/0</dd></div>
             <div class="stat"><dt>Líder</dt><dd id="s-best">0 m</dd></div>
@@ -647,6 +661,10 @@
             <small>Cruzan con el semáforo de los coches en rojo, o cada 12 s en mitad de las calles largas. Atropellar elimina al coche.</small>
           </div>
           <div class="field">
+            <label class="check" for="tour"><input type="checkbox" id="tour"> Entrenamiento todoterreno</label>
+            <small>Cada generación corre en tu mapa, una ciudad al azar y dos barrios reales; gana quien conduce bien en todos. El récord pasa a ser el % medio de calle explorada.</small>
+          </div>
+          <div class="field">
             <button class="btn danger" id="forget">Olvidar lo aprendido</button>
             <small>Empieza otra vez con cerebros al azar.</small>
           </div>
@@ -696,6 +714,11 @@
               <button class="btn primary" id="random-city">Ciudad al azar</button>
             </div>
           </div>
+          <div class="map-group">
+            <span class="group-k">Barrios reales</span>
+            <div class="row" id="real-templates"></div>
+            <small class="empty">Calles: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">colaboradores de OpenStreetMap</a>, recortadas y simplificadas.</small>
+          </div>
         </div>
         <p class="hint" id="hint"></p>
       </div>
@@ -713,5 +736,6 @@
 <script src="js/traffic.js"></script>
 <script src="js/scenery.js"></script>
 <script src="js/maps.js"></script>
+<script src="js/real-maps.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/app.js"></script>

@@ -156,7 +156,25 @@ class World {
     }
     this.intersections = buildIntersections(this);
     this.crosswalks = buildCrosswalks(this);
+    this.cellCapacity = this.countRoadCells();
     if (scenery || !this.scenery) this.scenery = generateScenery(this.graph);
+  }
+
+  // Cuántas celdas de la rejilla de exploración caen sobre asfalto: sirve para
+  // comparar lo explorado en mapas de distinto tamaño (entrenamiento todoterreno).
+  countRoadCells() {
+    const cells = new Set();
+    for (const envelope of this.envelopes) {
+      const box = boundsOf(envelope);
+      for (let x = Math.floor(box.minX / CELL_SIZE); x <= Math.floor(box.maxX / CELL_SIZE); x++) {
+        for (let y = Math.floor(box.minY / CELL_SIZE); y <= Math.floor(box.maxY / CELL_SIZE); y++) {
+          const key = x * 100003 + y;
+          if (cells.has(key)) continue;
+          if (pointInPolygon({ x: (x + 0.5) * CELL_SIZE, y: (y + 0.5) * CELL_SIZE }, envelope)) cells.add(key);
+        }
+      }
+    }
+    return Math.max(1, cells.size);
   }
 
   isOnRoad(p) {

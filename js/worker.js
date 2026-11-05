@@ -12,8 +12,9 @@ const CHUNK_MS = 50; // trabaja a ratos para poder atender el mensaje de parar
 onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "start") {
-    const world = new World(Graph.fromJSON(msg.map), msg.map.start);
-    sim = new Simulation(world, { ...msg.options, ...msg.training });
+    // Con la gira todoterreno llegan todos sus mapas; si no, solo el actual.
+    const worlds = (msg.tour || [msg.map]).map((m) => new World(Graph.fromJSON(m), m.start));
+    sim = new Simulation(worlds[0], { ...msg.options, ...msg.training, worlds });
     sim.onGeneration = ({ fitness, improved }) => {
       postMessage({ type: "generation", training: sim.training(), fitness, improved });
     };

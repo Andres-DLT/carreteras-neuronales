@@ -31,7 +31,13 @@ y abre http://localhost:8765.
   empieza desde las plantillas *Circuito*, *Cuadrícula*, *Glorieta*, *Montaña* y
   *Ciudad grande*. **Ciudad al azar** genera una ciudad distinta cada vez: calles
   torcidas y dobladas, y según la suerte una avenida, calles de sentido único, una
-  glorieta y un puente. **Exportar mapa** descarga un
+  glorieta y un puente. **Barrios reales**: calles de verdad sacadas de OpenStreetMap
+  (ver más abajo).
+- **Entrenamiento todoterreno** (en *Ajustes*): cada generación corre una manga en tu
+  mapa, otra en una ciudad al azar fija y otra en cada barrio real de la gira, con los
+  mismos cerebros. Gana quien explora más proporción de calle sumando todas las mangas,
+  así el cerebro aprende a conducir en general y no a recorrer un mapa concreto. El
+  récord pasa a ser el % medio de calle explorada. **Exportar mapa** descarga un
   archivo `.json` con el mapa y su cerebro entrenado; **Importar mapa** lo carga en
   otro navegador o dispositivo.
 - **Entrenar**: todos los coches salen a la vez. Cuando chocan todos (o pasa un minuto
@@ -72,6 +78,23 @@ y abre http://localhost:8765.
 Todo es determinista dentro de una generación (misma semilla y mismos tiempos), así el
 mejor cerebro repite exactamente su resultado y el récord nunca retrocede.
 
+## Barrios reales
+
+Las calles de los barrios reales vienen de **OpenStreetMap**
+(© [colaboradores de OpenStreetMap](https://www.openstreetmap.org/copyright), licencia ODbL).
+Para cada barrio se descargaron las calles por las que pueden circular coches en un
+cuadrado de unos 460–600 m de lado y se convirtieron al formato del juego, a escala real:
+
+- `oneway` → sentido único, `junction=roundabout` → glorieta, `bridge` → puente
+  (si es largo y recto) y vía principal de 3 o más carriles → avenida.
+- Se simplifican los trazados, se unen los nodos casi duplicados, se quitan los
+  callejones sin salida y se añade una circunvalación por el borde del recorte para
+  que las calles que salen del barrio no terminen en un muro.
+- Las calles peatonales no aparecen (por eso el Centro Histórico tiene menos calles
+  de las que se ven en un mapa normal).
+
+Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a internet.
+
 ## Cómo funciona
 
 | Archivo | Qué hace |
@@ -80,12 +103,13 @@ mejor cerebro repite exactamente su resultado y el récord nunca retrocede.
 | `js/graph.js` | El grafo del mapa: puntos y tramos con su tipo (calle, avenida, sentido único, glorieta, puente). |
 | `js/world.js` | Convierte cada tramo en un polígono redondeado y calcula la unión de todos para obtener los bordes; puentes en un nivel aparte; marcas viales de cada tipo; rejilla espacial. |
 | `js/maps.js` | Plantillas de mapa y generador de ciudades al azar con semilla. |
+| `js/real-maps.js` | Barrios reales convertidos de OpenStreetMap. |
 | `js/network.js` | Red neuronal de propagación hacia delante (9 → 6 → 4) con activación escalón, mutación y cruce. |
 | `js/car.js` | Física del coche, 7 sensores en abanico, choques y medición del terreno explorado. |
 | `js/traffic.js` | Cruces, ciclo de los semáforos, pasos de cebra, peatones, coches de tráfico y obstáculos móviles. |
 | `js/scenery.js` | Edificios a lo largo de las calles y arbolado en los huecos libres, en plano y en 3D. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
-| `js/sim.js` | Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. |
+| `js/sim.js` | Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
 | `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |
 
 **Entradas de la red**: las 7 distancias de los sensores, más la cercanía de un

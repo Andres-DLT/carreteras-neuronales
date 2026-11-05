@@ -16,7 +16,23 @@ function generateScenery(graph) {
   const segments = graph.segments;
   if (!segments.length) return { buildings: [], trees: [] };
   const rng = seededRandom(mapSeed(graph));
-  const clearOfRoads = (p, margin) => segments.every((s) => projectOnSegment(p, s.a, s.b).dist > roadHalf(s) + margin);
+  // Rejilla de tramos: cada punto candidato solo se compara con las calles cercanas
+  // (en un barrio real hay cientos de tramos y compararlos todos tarda demasiado).
+  const CELL = 200;
+  const REACH = 140; // medio ancho de avenida + el mayor margen que se pide abajo
+  const buckets = new Map();
+  for (const s of segments) {
+    const box = boundsOf([s.a, s.b]);
+    for (let x = Math.floor((box.minX - REACH) / CELL); x <= Math.floor((box.maxX + REACH) / CELL); x++) {
+      for (let y = Math.floor((box.minY - REACH) / CELL); y <= Math.floor((box.maxY + REACH) / CELL); y++) {
+        const key = x * 100003 + y;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(s);
+      }
+    }
+  }
+  const nearby = (p) => buckets.get(Math.floor(p.x / CELL) * 100003 + Math.floor(p.y / CELL)) || [];
+  const clearOfRoads = (p, margin) => nearby(p).every((s) => projectOnSegment(p, s.a, s.b).dist > roadHalf(s) + margin);
 
   // Manzanas: rectángulos a ambos lados de cada tramo, de frente a la calle.
   const buildings = [];

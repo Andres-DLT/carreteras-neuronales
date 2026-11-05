@@ -129,7 +129,11 @@
     const map = data.map || defaultMapData();
     world = new World(Graph.fromJSON(map), map.start || defaultMapData().start);
     world.ensureStart();
+    // El entrenamiento guardado es el de la gira si estaba activa al cerrar.
+    ui.tour = !!data.tour;
+    ui.realMap = data.realMap || null;
     sim = new Simulation(world, {
+      worlds: ui.tour ? buildTour() : null,
       count: data.count || (narrow ? 60 : 120),
       mutation: data.mutation ?? 0.15,
       brain: validBrain(data.brain) ? data.brain : null,
@@ -142,7 +146,7 @@
       pedestrians: data.pedestrians ?? true,
     });
     sim.onGeneration = onGeneration;
-    ui.trainedKey = mapKey(currentMapData());
+    ui.trainedKey = ui.tour ? TOUR_KEY : mapKey(currentMapData());
     ui.speed = data.speed || 1;
     ui.follow = data.follow ?? true;
     ui.view3d = !!data.view3d;
@@ -176,8 +180,65 @@
       showBrain: ui.showBrain,
       showCauses: ui.showCauses,
       view3d: ui.view3d,
+      tour: ui.tour,
+      realMap: ui.realMap || null,
     };
   }
+
+  // ---------- Entrenamiento todoterreno ----------
+  // La gira: tu mapa, una ciudad al azar fija y dos barrios reales. Un cerebro que
+  // conduce bien en todos ha aprendido a conducir, no a recorrer un mapa concreto.
+  const TOUR_KEY = "todoterreno";
+  const TOUR_SEED = 20261105;
+  const TOUR_REAL = ["condesa", "eixample"];
+
+  function tourMaps() {
+    const list = [
+      { name: "Tu mapa", data: currentMapData() },
+      { name: "Ciudad al azar", data: randomCityData(TOUR_SEED) },
+    ];
+    for (const key of TOUR_REAL) {
+      if (MAP_TEMPLATES[key]) list.push({ name: MAP_TEMPLATES[key].name, data: MAP_TEMPLATES[key].build(), real: true });
+    }
+    list[0].real = !!ui.realMap;
+    return list;
+  }
+
+  function buildTour() {
+    ui.tourMaps = tourMaps();
+    return ui.tourMaps.map((m, i) => (i === 0 ? world : new World(Graph.fromJSON(m.data), m.data.start)));
+  }
+
+  function setTour(on) {
+    if (turbo.on) {
+      toast("Detén el turbo antes de cambiar el modo de entrenamiento.");
+      $("#tour").checked = ui.tour;
+      return;
+    }
+    if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
+    ui.tour = on;
+    if (on) {
+      const saved = brainStore.get(TOUR_KEY);
+      sim.setWorlds(buildTour(), saved || { brain: sim.brain });
+      ui.trainedKey = TOUR_KEY;
+      toast(
+        saved
+          ? `Gira todoterreno: sigue el entrenamiento guardado (récord ${saved.record} %).`
+          : `Gira todoterreno: ${sim.worlds.length} mapas por generación, empezando con lo aprendido.`
+      );
+    } else {
+      const key = mapKey(currentMapData());
+      sim.setWorlds([world], brainStore.get(key) || { brain: sim.brain });
+      ui.trainedKey = key;
+      toast("Entrenamiento en un solo mapa.");
+    }
+    chartsDirty = true;
+    syncControls();
+    persistSoon();
+  }
+
+  // El récord se mide en metros con un mapa y en % medio de calle explorada en la gira.
+  const recordText = (value) => (sim.touring ? `${String(value).replace(".", ",")} %` : meters(value));
 
   // ---------- Cerebro guardado por mapa ----------
   // Cada mapa (identificado por su forma y su salida) guarda su mejor cerebro,
@@ -263,15 +324,19 @@
         world.ensureStart();
         if (ui.trainedKey) brainStore.put(ui.trainedKey, sim.training());
         const key = mapKey(currentMapData());
-        const saved = brainStore.get(key);
-        if (saved) {
+        const saved = ui.tour ? null : brainStore.get(key);
+        if (ui.tour) {
+          // Tu mapa forma parte de la gira: la gira cambia y su récord vuelve a cero.
+          sim.setWorlds(buildTour(), { brain: sim.brain });
+          toast("Tu mapa cambió: la gira todoterreno vuelve a la generación 1 con lo aprendido.");
+        } else if (saved) {
           sim.adopt(saved);
           toast(`Este mapa ya tenía entrenamiento: récord ${meters(saved.record)}, generación ${saved.generation}.`);
         } else {
           sim.adopt({ brain: sim.brain });
           toast("Mapa nuevo: los coches conservan lo aprendido y empiezan en la generación 1.");
         }
-        ui.trainedKey = key;
+        ui.trainedKey = ui.tour ? TOUR_KEY : key;
         ui.mapChanged = false;
         chartsDirty = true;
       }
@@ -326,7 +391,7 @@
 
   function onGeneration({ generation, fitness, improved }) {
     if (turbo.on) turbo.gens++;
-    else if (improved && generation > 1) toast(`Generación ${generation}: nuevo récord, ${meters(fitness)}`);
+    else if (improved && generation > 1) toast(`Generación ${generation}: nuevo récord, ${recordText(fitness)}`);
     if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
     chartsDirty = true;
     persistSoon();
@@ -357,7 +422,8 @@
         e.preventDefault();
         useTurboFallback();
       };
-      worker.postMessage({ type: "start", map: currentMapData(), training: sim.training(), options });
+      const tour = sim.touring && ui.tourMaps ? ui.tourMaps.map((m) => m.data) : null;
+      worker.postMessage({ type: "start", map: currentMapData(), tour, training: sim.training(), options });
       turbo.worker = worker;
     } catch {
       useTurboFallback();
@@ -394,7 +460,7 @@
     const seconds = Math.max(1, Math.round((performance.now() - turbo.started) / 1000));
     const gens = turbo.gens;
     Object.assign(turbo, { on: false, worker: null, fallback: false });
-    toast(`Turbo: ${gens} generaciones en ${seconds} s · récord ${meters(sim.record)}`);
+    toast(`Turbo: ${gens} generaciones en ${seconds} s · récord ${recordText(sim.record)}`);
     chartsDirty = true;
     syncControls();
     persist();
@@ -407,6 +473,10 @@
   const meters = (cells) => `${Math.round(cells * CELL_SIZE * METERS_PER_UNIT)} m`;
 
   // ---------- Dibujo del mundo ----------
+  // Mapa que se ve: el que se edita o, entrenando, el de la manga en curso (en la
+  // gira todoterreno cambia de una manga a otra).
+  const stage = () => (ui.mode === "train" ? sim.world : world);
+
   function draw() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = colors.grass;
@@ -414,8 +484,9 @@
     const z = view.zoom * dpr;
     ctx.setTransform(z, 0, 0, z, canvas.width / 2 - view.x * z, canvas.height / 2 - view.y * z);
 
+    const w = stage();
     drawSurveyGrid();
-    world.draw(ctx, colors);
+    w.draw(ctx, colors);
     drawCrosswalks();
     drawStopLines();
     drawStart();
@@ -425,12 +496,12 @@
       drawCars(false);
       drawPedestrians();
     }
-    world.drawBridges(ctx, colors);
+    w.drawBridges(ctx, colors);
     if (ui.mode === "train") drawCars(true);
-    if (ui.view3d) drawScenery3D(ctx, world.scenery, colors, { x: view.x, y: view.y });
+    if (ui.view3d) drawScenery3D(ctx, w.scenery, colors, { x: view.x, y: view.y });
     else {
-      drawBuildings(ctx, world.scenery.buildings, colors);
-      drawTrees(ctx, world.scenery.trees, colors);
+      drawBuildings(ctx, w.scenery.buildings, colors);
+      drawTrees(ctx, w.scenery.trees, colors);
     }
     if (ui.mode === "edit") drawGraph();
     drawSignals();
@@ -441,7 +512,7 @@
   function drawCrosswalks() {
     if (!sim.pedestrians) return;
     ctx.fillStyle = colors.stop;
-    for (const { c, u } of world.crosswalks) {
+    for (const { c, u } of stage().crosswalks) {
       ctx.save();
       ctx.translate(c.x, c.y);
       ctx.rotate(Math.atan2(u.y, u.x));
@@ -476,22 +547,23 @@
   }
 
   // ---------- Semáforos ----------
-  const lightsVisible = () => sim.lights && world.intersections.length > 0;
+  const lightsVisible = () => sim.lights && stage().intersections.length > 0;
   const currentLight = (intersection, approach) =>
     ui.mode === "train" && sim.traffic ? lightState(intersection, approach, sim.traffic.frame) : null;
 
   // Línea de detención sobre el carril de entrada de cada acceso.
   function drawStopLines() {
     if (!lightsVisible()) return;
-    const half = ROAD_WIDTH / 2 - 5;
     ctx.strokeStyle = colors.stop;
     ctx.lineWidth = 5;
     ctx.lineCap = "butt";
     ctx.beginPath();
-    for (const x of world.intersections) {
+    for (const x of stage().intersections) {
       for (const a of x.approaches) {
-        ctx.moveTo(a.stop.x, a.stop.y);
-        ctx.lineTo(a.stop.x + a.right.x * half, a.stop.y + a.right.y * half);
+        // En sentido único los dos carriles entran al cruce: la línea cruza toda la calzada.
+        const from = roadType(a.segment).oneway ? -(a.half - 5) : 0;
+        ctx.moveTo(a.stop.x + a.right.x * from, a.stop.y + a.right.y * from);
+        ctx.lineTo(a.stop.x + a.right.x * (a.half - 5), a.stop.y + a.right.y * (a.half - 5));
       }
     }
     ctx.stroke();
@@ -500,11 +572,11 @@
   // Semáforo en la acera derecha de cada acceso; en el editor se ven apagados.
   function drawSignals() {
     if (!lightsVisible()) return;
-    for (const x of world.intersections) {
+    for (const x of stage().intersections) {
       for (const a of x.approaches) {
         const state = currentLight(x, a);
-        const px = a.stop.x + a.right.x * (ROAD_WIDTH / 2 + 14);
-        const py = a.stop.y + a.right.y * (ROAD_WIDTH / 2 + 14);
+        const px = a.stop.x + a.right.x * (a.half + 14);
+        const py = a.stop.y + a.right.y * (a.half + 14);
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(Math.atan2(a.u.y, a.u.x));
@@ -548,7 +620,7 @@
 
   // Línea de salida a cuadros atravesando la calzada, con flecha de sentido.
   function drawStart() {
-    const { x, y, angle } = world.start;
+    const { x, y, angle } = stage().start;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
@@ -829,12 +901,18 @@
 
   function updateHud() {
     updateScale();
+    // Crédito de OpenStreetMap mientras se ve un barrio real.
+    const showingReal = ui.mode === "train" && sim.touring && ui.tourMaps ? ui.tourMaps[sim.heat].real : !!ui.realMap;
+    $("#osm-credit").hidden = !showingReal;
     if (ui.mode !== "train") return;
     const leader = sim.leader;
     setText(els.gen, String(sim.generation));
     setText(els.alive, `${sim.alive}/${sim.cars.length}`);
     setText(els.best, meters(leader.cells.size));
-    setText(els.record, meters(sim.record));
+    setText(els.record, recordText(sim.record));
+    const heat = $("#s-heat");
+    heat.hidden = !sim.touring;
+    if (sim.touring && ui.tourMaps) setText(heat, `Mapa ${sim.heat + 1} de ${sim.worlds.length} · ${ui.tourMaps[sim.heat].name}`);
     setText(els.kmh, `${Math.round(leader.kmh)} km/h`);
     if (turbo.on) {
       const seconds = (performance.now() - turbo.started) / 1000;
@@ -1041,7 +1119,7 @@
 
   // Encaja el mapa en el hueco que dejan libre la barra superior y la consola.
   function fitView() {
-    const points = world.graph.points;
+    const points = stage().graph.points;
     if (!points.length) {
       view.x = 0;
       view.y = 0;
@@ -1280,6 +1358,7 @@
     $("#causes-card").hidden = !ui.showCauses;
     $("#view3d").setAttribute("aria-pressed", String(ui.view3d));
     $("#pedestrians").checked = sim.pedestrians;
+    $("#tour").checked = ui.tour;
     $("#finish").disabled = !ui.selected;
     $("#hint").innerHTML = HINTS[ui.tool];
     $("#count").value = sim.count;
@@ -1307,7 +1386,8 @@
       persistSoon();
     })
   );
-  $("#next").addEventListener("click", () => sim.endGeneration());
+  $("#next").addEventListener("click", () => sim.finishHeat());
+  $("#tour").addEventListener("change", (e) => setTour(e.target.checked));
   $("#turbo").addEventListener("click", () => (turbo.on ? stopTurbo() : startTurbo()));
   $("#follow").addEventListener("click", () => setFollow(!ui.follow));
   $("#toggle-brain").addEventListener("click", () => {
@@ -1366,6 +1446,7 @@
   });
   armed($("#clear"), "Toca otra vez para vaciar", () => {
     world.graph.clear();
+    ui.realMap = null;
     ui.selected = null;
     mapEdited();
   });
@@ -1434,9 +1515,11 @@
     return { ...world.graph.toJSON(), start: { x: Math.round(x), y: Math.round(y), angle } };
   }
 
-  function openMap(data) {
+  // realKey: el barrio real del que sale el mapa (para mostrar el crédito de OSM).
+  function openMap(data, realKey = null) {
     world.graph = Graph.fromJSON(data);
     world.start = { ...data.start };
+    ui.realMap = realKey;
     ui.selected = null;
     mapEdited();
     buildWorld();
@@ -1580,10 +1663,20 @@
     toast(`Ciudad al azar n.º ${data.seed % 100000}. Guárdala en «Mis mapas» si te gusta.`);
   });
 
+  // Un botón por cada barrio real incluido.
+  for (const [key, template] of Object.entries(MAP_TEMPLATES)) {
+    if (!template.real) continue;
+    const button = document.createElement("button");
+    button.className = "btn";
+    button.dataset.template = key;
+    button.textContent = template.name;
+    $("#real-templates").append(button);
+  }
+
   $$("[data-template]").forEach((b) =>
     b.addEventListener("click", () => {
       const template = MAP_TEMPLATES[b.dataset.template];
-      openMap(template.build());
+      openMap(template.build(), template.real ? b.dataset.template : null);
       toast(`Plantilla «${template.name}» abierta.`);
     })
   );
