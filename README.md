@@ -55,6 +55,11 @@ y abre http://localhost:8765.
   generación que acabó por choque, por pasarse un rojo, por atropello, por quedarse
   atascado o que seguía en pista al terminar.
 - **3D**: el botón bajo la escala levanta edificios y árboles en perspectiva aérea.
+- **Estelas de luz** (en *Ajustes*): cada coche deja un trazo de luz, como en una foto
+  de larga exposición. La calle brilla más por donde pasa más población (de azul a
+  blanco), queda un destello donde un coche se elimina y el recorrido del líder se
+  marca en ámbar. Al empezar otra generación lo anterior se atenúa, así se ve cómo
+  cambia el recorrido de una generación a otra. Con el turbo no se dibujan.
 
 ## La ciudad
 
@@ -108,6 +113,7 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/car.js` | Física del coche, 7 sensores en abanico, choques y medición del terreno explorado. |
 | `js/traffic.js` | Cruces, ciclo de los semáforos, pasos de cebra, peatones, coches de tráfico y obstáculos móviles. |
 | `js/scenery.js` | Edificios a lo largo de las calles y arbolado en los huecos libres, en plano y en 3D. |
+| `js/trails.js` | Estelas de luz: los trazos de los coches se acumulan en un lienzo aparte y se atenúan en cada generación. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
 | `js/sim.js` | Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
 | `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |
