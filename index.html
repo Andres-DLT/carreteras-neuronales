@@ -60,6 +60,8 @@
     --cause-3: #1baf7a;
     --cause-4: #eda100;
     --cause-5: #e87ba4;
+    --trail: #3d9dff;
+    --spark: #ff5a36;
     --f-display: "Overpass", "Highway Gothic", "Arial Narrow", system-ui, sans-serif;
     --f-mono: "Overpass Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
     --gutter-l: max(16px, env(safe-area-inset-left, 0px));
@@ -116,6 +118,8 @@
       --cause-3: #199e70;
       --cause-4: #c98500;
       --cause-5: #d55181;
+      --trail: #2a8cff;
+      --spark: #ff5a36;
       color-scheme: dark;
     }
   }
@@ -169,6 +173,8 @@
     --cause-3: #199e70;
     --cause-4: #c98500;
     --cause-5: #d55181;
+    --trail: #2a8cff;
+    --spark: #ff5a36;
     color-scheme: dark;
   }
 
@@ -665,6 +671,10 @@
             <small>Cada generación corre en tu mapa, una ciudad al azar y dos barrios reales; gana quien conduce bien en todos. El récord pasa a ser el % medio de calle explorada.</small>
           </div>
           <div class="field">
+            <label class="check" for="trails"><input type="checkbox" id="trails" checked> Estelas de luz</label>
+            <small>Cada coche deja un trazo de luz: la calle brilla más por donde pasa más población, y queda un destello donde un coche se elimina. La generación anterior se ve más tenue.</small>
+          </div>
+          <div class="field">
             <button class="btn danger" id="forget">Olvidar lo aprendido</button>
             <small>Empieza otra vez con cerebros al azar.</small>
           </div>
@@ -735,6 +745,7 @@
 <script src="js/car.js"></script>
 <script src="js/traffic.js"></script>
 <script src="js/scenery.js"></script>
+<script src="js/trails.js"></script>
 <script src="js/maps.js"></script>
 <script src="js/real-maps.js"></script>
 <script src="js/sim.js"></script>

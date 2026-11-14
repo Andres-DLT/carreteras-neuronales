@@ -89,6 +89,8 @@
       line: get("--line"),
       mono: get("--f-mono"),
       causes: [get("--cause-1"), get("--cause-2"), get("--cause-3"), get("--cause-4"), get("--cause-5")],
+      trail: get("--trail"),
+      spark: get("--spark"),
     };
   }
   const themeChanged = () => {
@@ -118,11 +120,14 @@
     showBrain: !narrow,
     showCauses: !narrow,
     view3d: false,
+    trails: true, // estelas de luz de los coches
     needsBuild: false,
     mapChanged: false,
     trainedKey: null, // mapa al que pertenece el entrenamiento actual
   };
   let chartsDirty = true;
+  // En pantallas pequeñas el lienzo de las estelas es menor, para gastar menos memoria.
+  const trails = new Trails(narrow ? 2048 : 3072);
 
   function boot(saved) {
     const data = saved && saved.map ? saved : storage.load() || {};
@@ -150,6 +155,7 @@
     ui.speed = data.speed || 1;
     ui.follow = data.follow ?? true;
     ui.view3d = !!data.view3d;
+    ui.trails = data.trails ?? true;
     if (typeof data.showBrain === "boolean") ui.showBrain = data.showBrain;
     if (typeof data.showCauses === "boolean") ui.showCauses = data.showCauses;
 
@@ -180,6 +186,7 @@
       showBrain: ui.showBrain,
       showCauses: ui.showCauses,
       view3d: ui.view3d,
+      trails: ui.trails,
       tour: ui.tour,
       realMap: ui.realMap || null,
     };
@@ -355,6 +362,7 @@
   function buildWorld() {
     // Mientras se arrastra un punto no se recolocan edificios ni árboles.
     world.generate({ scenery: !(gesture && gesture.type === "drag") });
+    trails.reset(); // las estelas eran de las calles de antes
     ui.needsBuild = false;
   }
 
@@ -377,7 +385,12 @@
           const start = performance.now();
           while (turbo.on && performance.now() - start < 12) sim.step();
         }
-      } else if (ui.playing) for (let i = 0; i < ui.speed; i++) sim.step();
+      } else if (ui.playing) {
+        for (let i = 0; i < ui.speed; i++) {
+          sim.step();
+          if (ui.trails) trails.track(sim, colors);
+        }
+      }
       if (ui.follow) {
         const ease = 1 - Math.pow(0.88, ui.speed); // a más velocidad, la cámara alcanza antes al líder
         view.x = lerp(view.x, sim.leader.x, ease);
@@ -412,6 +425,7 @@
 
   function startTurbo() {
     if (ui.mode !== "train" || turbo.on) return;
+    trails.reset(); // el turbo no dibuja: las estelas vuelven a empezar al terminar
     Object.assign(turbo, { on: true, fallback: false, started: performance.now(), gens: 0, mapKey: ui.trainedKey });
     const s = simSettings();
     const options = { count: s.count, mutation: s.mutation, traffic: s.trafficCount, lights: s.lights, pedestrians: s.pedestrians };
@@ -492,12 +506,17 @@
     drawStart();
     // Los coches van antes que el paisaje: en 3D los edificios altos pueden taparlos.
     // Los puentes tapan lo que pasa por debajo y quedan bajo lo que circula por encima.
+    const lit = ui.mode === "train" && ui.trails && trails.world === w;
     if (ui.mode === "train") {
+      if (lit) trails.draw(ctx, false, sim.leader, colors);
       drawCars(false);
       drawPedestrians();
     }
     w.drawBridges(ctx, colors);
-    if (ui.mode === "train") drawCars(true);
+    if (ui.mode === "train") {
+      if (lit) trails.draw(ctx, true, sim.leader, colors);
+      drawCars(true);
+    }
     if (ui.view3d) drawScenery3D(ctx, w.scenery, colors, { x: view.x, y: view.y });
     else {
       drawBuildings(ctx, w.scenery.buildings, colors);
@@ -1358,6 +1377,7 @@
     $("#causes-card").hidden = !ui.showCauses;
     $("#view3d").setAttribute("aria-pressed", String(ui.view3d));
     $("#pedestrians").checked = sim.pedestrians;
+    $("#trails").checked = ui.trails;
     $("#tour").checked = ui.tour;
     $("#finish").disabled = !ui.selected;
     $("#hint").innerHTML = HINTS[ui.tool];
@@ -1476,6 +1496,11 @@
   $("#pedestrians").addEventListener("change", (e) => {
     sim.pedestrians = e.target.checked;
     sendTurboSettings();
+    persistSoon();
+  });
+  $("#trails").addEventListener("change", (e) => {
+    ui.trails = e.target.checked;
+    if (!ui.trails) trails.reset(); // libera los lienzos
     persistSoon();
   });
   $("#toggle-causes").addEventListener("click", () => {
