@@ -119,6 +119,7 @@ class World {
   // scenery: false mientras se arrastra un punto, para no recolocar edificios
   // y árboles en cada movimiento; se recalculan al soltar.
   generate({ scenery = true } = {}) {
+    this.version = (this.version || 0) + 1; // la vista 3D rehace su escena cuando cambia
     const segments = this.graph.segments;
     this.envelopes = segments.map((s) => roadEnvelope(s.a, s.b, roadType(s).width));
     // Nivel del suelo: todos los tramos menos los puentes, más una rampa corta en
