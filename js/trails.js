@@ -14,6 +14,7 @@ const TRAIL_ALPHA = 0.09; // luz que aporta cada coche: con unos 50 encima llega
 const TRAIL_KEEP = 0.45; // parte de la luz que sobrevive al empezar otra generación
 const TRAIL_MARGIN = 150; // borde alrededor del mapa, para que quepa media avenida
 const SPARK_RADIUS = 8; // radio del destello donde un coche queda eliminado
+const TRAIL_TILE = 256; // lado de las baldosas con que se anota qué zonas del lienzo cambian
 
 class Trails {
   // maxSize: lado máximo del lienzo, en píxeles (acota la memoria en mapas grandes).
@@ -30,6 +31,28 @@ class Trails {
     this.cars = null;
     this.paths = [];
     this.done = null;
+    // La vista 3D usa el lienzo del suelo como textura y solo vuelve a subir a la
+    // tarjeta gráfica lo que cambió: las baldosas anotadas aquí, o todo si dirtyAll.
+    this.dirty = new Set();
+    this.dirtyAll = true;
+  }
+
+  // Anota las baldosas del lienzo del suelo que toca el rectángulo (en unidades del mapa).
+  mark(x0, y0, x1, y1, pad) {
+    if (this.dirtyAll) return;
+    const { x, y, scale } = this.box;
+    const tile = (v, origin) => Math.max(0, Math.floor(((v - origin) * scale) / TRAIL_TILE));
+    const bx = tile(Math.max(x0, x1) + pad, x);
+    const by = tile(Math.max(y0, y1) + pad, y);
+    for (let ty = tile(Math.min(y0, y1) - pad, y); ty <= by; ty++) {
+      for (let tx = tile(Math.min(x0, x1) - pad, x); tx <= bx; tx++) this.dirty.add(ty * 4096 + tx);
+    }
+    if (this.dirty.size > 2000) this.touchAll(); // nadie las está recogiendo (vista en plano)
+  }
+
+  touchAll() {
+    this.dirty.clear();
+    this.dirtyAll = true;
   }
 
   // Prepara los lienzos para un mapa: uno para el suelo y, si hay puentes, otro para
@@ -50,6 +73,7 @@ class Trails {
     box.scale = Math.min(1, this.maxSize / Math.max(box.w, box.h));
     this.box = box;
     this.layers = [this.makeLayer(), world.bridges.length ? this.makeLayer() : null];
+    this.touchAll();
   }
 
   makeLayer() {
@@ -80,6 +104,7 @@ class Trails {
       ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.restore();
     }
+    this.touchAll();
     this.cars = cars;
     this.paths = cars.map((car) => [car.x, car.y, car.level ? 1 : 0]);
     this.done = new Uint8Array(cars.length);
@@ -117,6 +142,7 @@ class Trails {
       ctx.moveTo(x0, y0);
       ctx.lineTo(car.x, car.y);
       ctx.stroke();
+      if (ctx === this.layers[0]) this.mark(x0, y0, car.x, car.y, ctx.lineWidth);
       path.push(car.x, car.y, level);
       if (ended) this.finish(i, car, colors);
     }
@@ -137,6 +163,7 @@ class Trails {
     ctx.beginPath();
     ctx.arc(car.x, car.y, r, 0, Math.PI * 2);
     ctx.fill();
+    if (ctx === this.layers[0]) this.mark(car.x, car.y, car.x, car.y, r);
   }
 
   // Pinta en el lienzo del juego (ya en coordenadas del mundo) la luz acumulada de un

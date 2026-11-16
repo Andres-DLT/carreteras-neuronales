@@ -1,9 +1,13 @@
 # Carreteras Neuronales
 
-Un mundo virtual en JavaScript puro (sin librerías) donde dibujas carreteras y una
-población de coches autónomos aprende a conducir por ellas mediante una red neuronal
-y un algoritmo genético. La ciudad tiene tráfico, semáforos, peatones, edificios y
-árboles, con vista en 3D.
+Un mundo virtual en JavaScript donde dibujas carreteras y una población de coches
+autónomos aprende a conducir por ellas mediante una red neuronal y un algoritmo
+genético. La ciudad tiene tráfico, semáforos, peatones, edificios y árboles, y se
+puede ver en plano o en una vista 3D realista.
+
+La simulación, el editor y la vista en plano son JavaScript puro, sin librerías. Solo
+la vista 3D usa [three.js](https://threejs.org), que va incluido en `vendor/` y se
+carga la primera vez que se pide.
 
 **▶ Juega aquí: https://andres-dlt.github.io/carreteras-neuronales/**
 
@@ -54,7 +58,13 @@ y abre http://localhost:8765.
 - **Por qué se eliminan**: gráfica de barras con el porcentaje de coches de cada
   generación que acabó por choque, por pasarse un rojo, por atropello, por quedarse
   atascado o que seguía en pista al terminar.
-- **3D**: el botón bajo la escala levanta edificios y árboles en perspectiva aérea.
+- **3D**: el botón bajo la escala cambia a la vista 3D realista (entrenando): cámara en
+  perspectiva detrás del líder, o desde lo alto si no lo sigues, con sombras, casas con
+  tejado y ventanas, árboles, farolas, semáforos con poste, coches con volumen y puentes
+  elevados. Con el tema claro es de día; con el oscuro es de noche, con las ventanas y
+  las farolas encendidas y los faros alumbrando la calle. La rueda o el pellizco acercan
+  y alejan la cámara. En el editor, y en navegadores sin WebGL, el botón levanta los
+  edificios en perspectiva aérea sobre el plano, como antes.
 - **Estelas de luz** (en *Ajustes*): cada coche deja un trazo de luz, como en una foto
   de larga exposición. La calle brilla más por donde pasa más población (de azul a
   blanco), queda un destello donde un coche se elimina y el recorrido del líder se
@@ -114,6 +124,8 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/traffic.js` | Cruces, ciclo de los semáforos, pasos de cebra, peatones, coches de tráfico y obstáculos móviles. |
 | `js/scenery.js` | Edificios a lo largo de las calles y arbolado en los huecos libres, en plano y en 3D. |
 | `js/trails.js` | Estelas de luz: los trazos de los coches se acumulan en un lienzo aparte y se atenúan en cada generación. |
+| `js/view3d.js` | Vista 3D realista: construye la escena de cada mapa (calles, aceras, marcas viales, casas, árboles, farolas, semáforos, puentes) y mueve en ella coches, peatones, sensores, estelas y cámara. |
+| `vendor/three.min.js` | [three.js](https://threejs.org) r159 (licencia MIT), el motor con el que se dibuja la vista 3D. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
 | `js/sim.js` | Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
 | `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |

@@ -12,6 +12,7 @@
   const netCtx = netCanvas.getContext("2d");
   const sparkCanvas = $("#spark");
   const sparkCtx = sparkCanvas.getContext("2d");
+  const canvas3d = $("#world3d");
 
   const STORAGE_KEY = "carreteras-neuronales/v1";
   const HIT_RADIUS = 18; // px de pantalla para tocar un punto
@@ -91,6 +92,7 @@
       causes: [get("--cause-1"), get("--cause-2"), get("--cause-3"), get("--cause-4"), get("--cause-5")],
       trail: get("--trail"),
       spark: get("--spark"),
+      night: get("--night") === "1", // la vista 3D es de noche con el tema oscuro
     };
   }
   const themeChanged = () => {
@@ -126,8 +128,7 @@
     trainedKey: null, // mapa al que pertenece el entrenamiento actual
   };
   let chartsDirty = true;
-  // En pantallas pequeñas el lienzo de las estelas es menor, para gastar menos memoria.
-  const trails = new Trails(narrow ? 2048 : 3072);
+  const trails = new Trails(2048);
 
   function boot(saved) {
     const data = saved && saved.map ? saved : storage.load() || {};
@@ -155,6 +156,7 @@
     ui.speed = data.speed || 1;
     ui.follow = data.follow ?? true;
     ui.view3d = !!data.view3d;
+    if (ui.view3d) loadView3D();
     ui.trails = data.trails ?? true;
     if (typeof data.showBrain === "boolean") ui.showBrain = data.showBrain;
     if (typeof data.showCauses === "boolean") ui.showCauses = data.showCauses;
@@ -397,7 +399,10 @@
         view.y = lerp(view.y, sim.leader.y, ease);
       }
     }
-    draw();
+    const in3d = live3d();
+    if (canvas3d.hidden === in3d) canvas3d.hidden = !in3d;
+    if (in3d) draw3D();
+    else draw();
     if (tick++ % 6 === 0) updateHud();
     requestAnimationFrame(loop);
   }
@@ -485,6 +490,63 @@
   }
 
   const meters = (cells) => `${Math.round(cells * CELL_SIZE * METERS_PER_UNIT)} m`;
+
+  // ---------- Vista 3D realista ----------
+  // three.js pesa lo suyo, así que solo se descarga la primera vez que se pide el 3D.
+  // Mientras llega (o si el navegador no tiene WebGL) se ve la vista aérea de siempre.
+  let view3d = null;
+  let view3dState = "idle"; // idle → loading → ready | failed
+
+  function loadView3D() {
+    if (view3dState !== "idle") return;
+    if (!View3D.supported()) {
+      view3dState = "failed";
+      toast("Este navegador no puede mostrar la vista 3D realista: se usa la vista aérea.");
+      return;
+    }
+    view3dState = "loading";
+    const script = document.createElement("script");
+    script.src = "vendor/three.min.js";
+    script.onload = () => {
+      try {
+        view3d = new View3D(canvas3d, { small: narrow });
+        view3dState = "ready";
+        resize();
+      } catch (err) {
+        fail3D(err);
+      }
+    };
+    script.onerror = () => fail3D(new Error("no se pudo descargar three.js"));
+    document.head.appendChild(script);
+  }
+
+  function fail3D(err) {
+    console.error(err);
+    view3dState = "failed";
+    canvas3d.hidden = true;
+    toast("La vista 3D realista no está disponible: se usa la vista aérea.");
+  }
+
+  // El 3D realista solo se usa entrenando; el editor trabaja siempre sobre el plano.
+  const live3d = () => ui.view3d && ui.mode === "train" && view3dState === "ready";
+
+  function draw3D() {
+    try {
+      if (view3d.colors !== colors) view3d.setTheme(colors);
+      view3d.setWorld(sim.world, { pedestrians: sim.pedestrians, lights: sim.lights });
+      view3d.render({
+        sim,
+        view,
+        follow: ui.follow,
+        speed: ui.playing && !turbo.on ? ui.speed : 1,
+        driveZoom: DRIVE_ZOOM,
+        trails: ui.trails ? trails : null,
+      });
+      if (ui.showBrain) drawNetwork();
+    } catch (err) {
+      fail3D(err);
+    }
+  }
 
   // ---------- Dibujo del mundo ----------
   // Mapa que se ve: el que se edita o, entrenando, el de la manga en curso (en la
@@ -1114,6 +1176,7 @@
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(canvas.clientWidth * dpr);
     canvas.height = Math.round(canvas.clientHeight * dpr);
+    if (view3d) view3d.resize(canvas.clientWidth, canvas.clientHeight, dpr);
     lastSparkLength = -1;
     chartsDirty = true;
   }
@@ -1511,6 +1574,7 @@
   });
   $("#view3d").addEventListener("click", () => {
     ui.view3d = !ui.view3d;
+    if (ui.view3d) loadView3D();
     syncControls();
     persistSoon();
   });
