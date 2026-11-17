@@ -176,6 +176,54 @@ Object.assign(View3D.prototype, {
     }
   },
 
+  // Modo destino: una columna de luz, un círculo y un banderín a cuadros donde termina la ruta.
+  updateGoal(sim) {
+    const route = sim.mode === "goal" ? sim.route : null;
+    if (!route) {
+      if (this.goalMark) this.goalMark.visible = false;
+      return;
+    }
+    if (!this.goalMark) this.makeGoalMark();
+    const end = route.points[route.points.length - 1];
+    this.goalMark.visible = true;
+    this.goalMark.position.set(end.x, 0, end.y);
+    this.goalBeam.material.opacity = 0.2 + 0.08 * Math.sin(this.frame * 0.06);
+  },
+
+  makeGoalMark() {
+    const green = 0x43c486;
+    const mark = new THREE.Group();
+    const beamGeo = new THREE.CylinderGeometry(28, 28, 460, 28, 1, true);
+    beamGeo.translate(0, 230, 0);
+    this.goalBeam = new THREE.Mesh(
+      beamGeo,
+      new THREE.MeshBasicMaterial({ color: green, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false })
+    );
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(46, 54, 48),
+      new THREE.MeshBasicMaterial({ color: green, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = V3.Y_TRAIL + 0.4;
+    const poleGeo = new THREE.CylinderGeometry(1.1, 1.3, 72, 8);
+    poleGeo.translate(0, 36, 0);
+    const pole = new THREE.Mesh(poleGeo, this.mat.pole);
+    pole.castShadow = true;
+    const checks = this.texture(64, (ctx, s) => {
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) {
+        ctx.fillStyle = (r + c) % 2 ? "#151515" : "#f4f4ef";
+        ctx.fillRect((c * s) / 6, (r * s) / 4, s / 6 + 1, s / 4 + 1);
+      }
+    }, false);
+    const flagGeo = new THREE.PlaneGeometry(36, 24);
+    flagGeo.translate(19, 59, 0);
+    const flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ map: checks, side: THREE.DoubleSide, roughness: 0.8 }));
+    flag.castShadow = true;
+    mark.add(this.goalBeam, ring, pole, flag);
+    this.scene.add(mark);
+    this.goalMark = mark;
+  },
+
   updateFx(sim, state) {
     if (!this.sparks) return;
     const scale = this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));

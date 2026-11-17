@@ -1207,9 +1207,11 @@ class View3D {
     // Todos salen del mismo punto: aunque son translúcidos, amontonados sobre el coche
     // al que sigue la cámara lo taparían. Los que están pegados a él no se dibujan, y
     // los cercanos se ven más pequeños cuanto más cerca, para que no aparezcan de golpe.
+    // Conviviendo, el equipo del líder va con todo detalle.
+    const mates = sim.mode === "together" ? sim.mates : null;
     let g = 0;
     for (const car of sim.cars) {
-      if (car === leader || g >= V3.MAX_GHOSTS) continue;
+      if (car === leader || g >= V3.MAX_GHOSTS || (mates && mates.includes(car))) continue;
       const gap = Math.hypot(car.x - subject.x, car.y - subject.y);
       if (gap <= V3.GHOST_NEAR) continue;
       const t = Math.min(1, (gap - V3.GHOST_NEAR) / (V3.GHOST_FAR - V3.GHOST_NEAR));
@@ -1223,6 +1225,7 @@ class View3D {
 
     const detailed = [{ car: leader, color: leader.damaged ? colors.wreck : colors.leader, style: "sedan" }];
     if (sim.player) detailed.push({ car: sim.player, color: sim.player.damaged ? colors.wreck : colors.player, style: "sedan" });
+    if (mates) for (const car of mates) if (car !== leader) detailed.push({ car, color: car.damaged ? colors.wreck : colors.car, style: "hatch" });
     if (sim.traffic) {
       sim.traffic.cars.forEach((car, i) => {
         if (detailed.length >= V3.MAX_DETAILED) return;
@@ -1594,6 +1597,7 @@ class View3D {
     this.updateCamera(state);
     this.updateRain();
     if (this.updateFx) this.updateFx(sim, state);
+    if (this.updateGoal) this.updateGoal(sim);
     this.renderer.render(this.scene, this.camera);
   }
 }

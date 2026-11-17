@@ -110,9 +110,10 @@ const unitVector = (a, b) => {
 };
 
 class World {
-  constructor(graph, start) {
+  constructor(graph, start, goal = null) {
     this.graph = graph;
     this.start = { ...start };
+    this.goal = goal ? { x: goal.x, y: goal.y } : null; // destino del modo destino; null: el punto más lejano
     this.generate();
   }
 
@@ -176,6 +177,106 @@ class World {
       }
     }
     return Math.max(1, cells.size);
+  }
+
+  // Modo destino: la ruta más corta por las calles desde la salida hasta el destino,
+  // respetando los sentidos únicos. Sin destino puesto, va al punto más lejano al que
+  // se puede llegar. Devuelve { points: [{ x, y, r }], cum, length } (r es lo cerca que
+  // hay que pasar de cada punto; cum, la distancia acumulada) o null si no hay ruta.
+  route() {
+    const key = this.version + "|" + (this.goal ? Math.round(this.goal.x) + "," + Math.round(this.goal.y) : "auto") +
+      "|" + Math.round(this.start.x) + "," + Math.round(this.start.y) + "," + this.start.angle.toFixed(3);
+    if (!this.routeCache || this.routeCache.key !== key) this.routeCache = { key, route: this.findRoute() };
+    return this.routeCache.route;
+  }
+
+  findRoute() {
+    const g = this.graph;
+    const from = g.nearestSegment(this.start, ROAD_WIDTH * 2);
+    if (!from) return null;
+    const s0 = from.segment;
+    // Se sale hacia el extremo del tramo al que apunta la salida.
+    const forward = (s0.b.x - s0.a.x) * Math.cos(this.start.angle) + (s0.b.y - s0.a.y) * Math.sin(this.start.angle) >= 0;
+    const ahead = forward ? s0.b : s0.a;
+    const dist = new Map([[ahead, distance(this.start, ahead)]]);
+    const prev = new Map();
+    const done = new Set();
+    for (;;) {
+      let node = null;
+      for (const [p, d] of dist) if (!done.has(p) && (!node || d < dist.get(node))) node = p;
+      if (!node) break;
+      done.add(node);
+      for (const s of g.segments) {
+        const next = s.a === node ? s.b : s.b === node && !roadType(s).oneway ? s.a : null;
+        if (!next || (node === ahead && s === s0)) continue; // nada de dar la vuelta nada más salir
+        const d = dist.get(node) + distance(s.a, s.b);
+        if (!dist.has(next) || d < dist.get(next)) {
+          dist.set(next, d);
+          prev.set(next, node);
+        }
+      }
+    }
+
+    let end = null; // último nudo de la ruta
+    let tail = null; // y, si hay destino puesto, el propio destino
+    const to = this.goal ? g.nearestSegment(this.goal, ROAD_WIDTH * 2) : null;
+    if (to) {
+      const sameWay = to.segment === s0 && (forward ? to.t > from.t : to.t < from.t);
+      let best = Infinity;
+      for (const node of [to.segment.a, to.segment.b]) {
+        if (node === to.segment.b && roadType(to.segment).oneway) continue; // al destino se llega de a hacia b
+        if (!dist.has(node)) continue;
+        const d = dist.get(node) + distance(node, to.point);
+        if (d < best) {
+          best = d;
+          end = node;
+        }
+      }
+      tail = { x: to.point.x, y: to.point.y, r: 52 };
+      if (sameWay) end = null; // está en el mismo tramo, por delante: todo recto
+      else if (!end) tail = null; // no se puede llegar: se usa el punto más lejano
+    }
+    if (!tail) {
+      for (const [p, d] of dist) if (!end || d > dist.get(end)) end = p;
+    }
+
+    const nodes = [];
+    for (let p = end; p; p = prev.get(p)) nodes.unshift(p);
+    const points = [{ x: this.start.x, y: this.start.y, r: 0 }];
+    for (const p of nodes) points.push({ x: p.x, y: p.y, r: (this.nodeHalf.get(p) || ROAD_WIDTH / 2) + 18 });
+    if (tail) points.push(tail);
+    if (points.length < 2) return null;
+    const cum = [0];
+    for (let i = 1; i < points.length; i++) cum.push(cum[i - 1] + distance(points[i - 1], points[i]));
+    return { points, cum, length: cum[cum.length - 1] };
+  }
+
+  // Modo convivir: puntos de salida repartidos por el mapa, en mitad de los tramos
+  // largos y bien separados entre sí. Uno sí y otro no salen en sentido contrario,
+  // para que los coches se encuentren de frente.
+  spots(n) {
+    const list = [{ x: this.start.x, y: this.start.y, angle: this.start.angle }];
+    const candidates = [];
+    for (const s of this.graph.segments) {
+      if (s.type === "puente" || distance(s.a, s.b) < 220) continue;
+      const mid = lerpPoint(s.a, s.b, 0.5);
+      candidates.push({ x: mid.x, y: mid.y, angle: Math.atan2(s.b.y - s.a.y, s.b.x - s.a.x), twoWay: !roadType(s).oneway });
+    }
+    while (list.length < n) {
+      let best = null;
+      let bestGap = 260;
+      for (const c of candidates) {
+        let gap = Infinity;
+        for (const p of list) gap = Math.min(gap, distance(p, c));
+        if (gap > bestGap) {
+          best = c;
+          bestGap = gap;
+        }
+      }
+      if (!best) break;
+      list.push({ x: best.x, y: best.y, angle: best.twoWay && list.length % 2 ? best.angle + Math.PI : best.angle });
+    }
+    return list;
   }
 
   isOnRoad(p) {

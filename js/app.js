@@ -21,12 +21,27 @@
   const narrow = matchMedia("(max-width: 720px)").matches;
   const coarse = matchMedia("(pointer: coarse)").matches; // pantalla táctil
 
+  // Qué aprenden los coches (ver sim.js) y cómo se explica en Ajustes.
+  const LEARN_NAMES = { explore: "Explorar", goal: "Ir a un destino", together: "Convivir" };
+  const LEARN_HELP = {
+    explore: "Gana quien más terreno distinto recorre.",
+    goal:
+      "Gana quien más avanza por la ruta y, si llegan varios, quien llega antes. El destino se pone con la herramienta " +
+      "Destino del editor; sin él, van al punto más lejano de la salida. Usa un cerebro aparte, con dos entradas más.",
+    together:
+      "Cada cerebro conduce un equipo de 6 coches repartidos por el mapa que pueden chocar entre sí; no hay más tráfico. " +
+      "El marcador dice por qué lado de la calle circulan: si se alejan del 50 %, han inventado una norma.",
+  };
+
   const HINTS = {
     add:
       "<b>Toca</b> para poner puntos: cada uno se une al anterior. Toca un punto existente para conectarlo, " +
       "o el último otra vez para terminar el tramo. <b>Arrastra</b> un punto para moverlo y el fondo para desplazarte.",
     erase: "<b>Toca</b> un punto o un tramo de carretera para borrarlo.",
     start: "<b>Toca</b> una carretera para poner la salida. Tócala otra vez para invertir el sentido.",
+    goal:
+      "<b>Toca</b> una calle para poner el destino del modo «Ir a un destino». Toca el destino otra vez para quitarlo: " +
+      "entonces van al punto más lejano de la salida.",
     type:
       "<b>Toca</b> un tramo para cambiar su tipo: calle → avenida → sentido único (en un sentido y en el otro) → " +
       "puente → calle. Un puente cruza por encima de otras calles sin formar cruce.",
@@ -125,6 +140,7 @@
     showCauses: !narrow,
     view3d: false,
     driving: false, // conduces tú un coche
+    learn: "explore", // qué aprenden: explore, goal o together
     trails: true, // estelas de luz de los coches
     camera: "chase", // cámara de la vista 3D al seguir un coche: chase, cockpit, drone o director
     sound: false,
@@ -140,16 +156,18 @@
   function boot(saved) {
     const data = saved && saved.map ? saved : storage.load() || {};
     const map = data.map || defaultMapData();
-    world = new World(Graph.fromJSON(map), map.start || defaultMapData().start);
+    world = new World(Graph.fromJSON(map), map.start || defaultMapData().start, validGoal(map.goal) ? map.goal : null);
     world.ensureStart();
     // El entrenamiento guardado es el de la gira si estaba activa al cerrar.
     ui.tour = !!data.tour;
     ui.realMap = data.realMap || null;
+    ui.learn = MODES.includes(data.learn) ? data.learn : "explore";
     sim = new Simulation(world, {
       worlds: ui.tour ? buildTour() : null,
       count: data.count || (narrow ? 60 : 120),
       mutation: data.mutation ?? 0.15,
-      brain: validBrain(data.brain) ? data.brain : null,
+      brain: validBrain(data.brain, Simulation.shape(ui.learn)[0]) ? data.brain : null,
+      mode: ui.learn,
       record: data.record || 0,
       history: data.history || [],
       causes: data.causes || [],
@@ -159,7 +177,7 @@
       pedestrians: data.pedestrians ?? true,
     });
     sim.onGeneration = onGeneration;
-    ui.trainedKey = ui.tour ? TOUR_KEY : mapKey(currentMapData());
+    ui.trainedKey = trainingKey();
     ui.speed = data.speed || 1;
     ui.follow = data.follow ?? true;
     ui.view3d = !!data.view3d;
@@ -189,7 +207,8 @@
     // Un récord solo vale para el mapa en que se logró.
     const keepRecord = !ui.mapChanged;
     return {
-      map: { ...world.graph.toJSON(), start: { x: Math.round(world.start.x), y: Math.round(world.start.y), angle: world.start.angle } },
+      map: currentMapData(),
+      learn: ui.learn,
       brain: sim.brain,
       record: keepRecord ? sim.record : 0,
       history: keepRecord ? sim.history : [],
@@ -249,28 +268,61 @@
     }
     if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
     ui.tour = on;
+    const key = trainingKey();
+    const saved = brainStore.get(key);
     if (on) {
-      const saved = brainStore.get(TOUR_KEY);
       sim.setWorlds(buildTour(), saved || { brain: sim.brain });
-      ui.trainedKey = TOUR_KEY;
       toast(
         saved
           ? `Gira todoterreno: sigue el entrenamiento guardado (récord ${saved.record} %).`
           : `Gira todoterreno: ${sim.worlds.length} mapas por generación, empezando con lo aprendido.`
       );
     } else {
-      const key = mapKey(currentMapData());
-      sim.setWorlds([world], brainStore.get(key) || { brain: sim.brain });
-      ui.trainedKey = key;
+      sim.setWorlds([world], saved || { brain: sim.brain });
       toast("Entrenamiento en un solo mapa.");
     }
+    ui.trainedKey = key;
+    chartsDirty = true;
+    syncControls();
+    persistSoon();
+  }
+
+  // Qué aprenden: cada modo guarda su propio entrenamiento. Explorar y convivir usan
+  // la misma red, así que al pasar de uno a otro se parte de lo aprendido.
+  function setLearn(mode) {
+    if (turbo.on) {
+      toast("Detén el turbo antes de cambiar lo que aprenden.");
+      $("#learn").value = ui.learn;
+      return;
+    }
+    if (mode === ui.learn || !MODES.includes(mode)) return;
+    if (ui.trainedKey && !ui.mapChanged) brainStore.put(ui.trainedKey, sim.training());
+    ui.learn = mode;
+    const key = trainingKey();
+    const saved = brainStore.get(key);
+    sim.setMode(mode, saved || { brain: sim.brain });
+    ui.trainedKey = key;
+    const name = LEARN_NAMES[mode];
+    toast(
+      saved
+        ? `${name}: sigue el entrenamiento guardado, récord ${recordText(saved.record)}.`
+        : sim.brain
+          ? `${name}: empieza en la generación 1 con lo aprendido.`
+          : `${name}: empieza en la generación 1 con cerebros nuevos.`
+    );
     chartsDirty = true;
     syncControls();
     persistSoon();
   }
 
   // El récord se mide en metros con un mapa y en % medio de calle explorada en la gira.
-  const recordText = (value) => (sim.touring ? `${String(value).replace(".", ",")} %` : meters(value));
+  const recordText = (value) => {
+    const percent = `${String(value).replace(".", ",")} %`;
+    if (sim.touring) return percent;
+    // Hacia un destino: % de la ruta o, si llegó, en cuánto tiempo (ver endGeneration).
+    if (sim.mode === "goal") return value > 100 ? `llega en ${Math.max(1, Math.round((1 - (value - 100) / 100) * 60))} s` : percent;
+    return meters(value);
+  };
 
   // ---------- Cerebro guardado por mapa ----------
   // Cada mapa (identificado por su forma y su salida) guarda su mejor cerebro,
@@ -286,7 +338,7 @@
     },
     get(key) {
       const entry = this.all()[key];
-      return entry && entry.record > 0 && validBrain(entry.brain) ? entry : null;
+      return entry && entry.record > 0 && (validBrain(entry.brain) || validBrain(entry.brain, GOAL_INPUTS)) ? entry : null;
     },
     write(all) {
       try {
@@ -323,11 +375,23 @@
     return (h >>> 0).toString(36);
   }
 
-  // Comprueba que un cerebro guardado o importado tiene la forma que espera la red.
-  function validBrain(brain) {
+  // Clave con la que se guarda un entrenamiento: la del mapa (o la de la gira) más el
+  // modo, salvo explorar, que conserva la de siempre. Hacia un destino cuenta también
+  // dónde está el destino.
+  function keyFor(map, mode, tour = false) {
+    const base = tour ? TOUR_KEY : mapKey(map);
+    if (mode === "explore") return base;
+    if (mode === "goal" && !tour && map.goal) return `${base}/goal@${Math.round(map.goal.x)},${Math.round(map.goal.y)}`;
+    return `${base}/${mode}`;
+  }
+  const trainingKey = () => keyFor(currentMapData(), ui.learn, ui.tour);
+
+  // Comprueba que un cerebro guardado o importado tiene la forma que espera la red
+  // (inputCount entradas: las de explorar y convivir, o las del modo destino).
+  function validBrain(brain, inputCount = BRAIN_INPUTS) {
     if (!brain || !Array.isArray(brain.levels) || !brain.levels.length) return false;
     const nums = (a, n) => Array.isArray(a) && a.length === n && a.every((v) => Number.isFinite(v));
-    let inputs = BRAIN_INPUTS;
+    let inputs = inputCount;
     for (const level of brain.levels) {
       const outputs = Array.isArray(level.outputs) ? level.outputs.length : 0;
       if (!outputs || !nums(level.inputs, inputs) || !nums(level.outputs, outputs) || !nums(level.biases, outputs)) return false;
@@ -356,7 +420,7 @@
       } else if (ui.mapChanged) {
         world.ensureStart();
         if (ui.trainedKey) brainStore.put(ui.trainedKey, sim.training());
-        const key = mapKey(currentMapData());
+        const key = trainingKey();
         const saved = ui.tour ? null : brainStore.get(key);
         if (ui.tour) {
           // Tu mapa forma parte de la gira: la gira cambia y su récord vuelve a cero.
@@ -364,12 +428,12 @@
           toast("Tu mapa cambió: la gira todoterreno vuelve a la generación 1 con lo aprendido.");
         } else if (saved) {
           sim.adopt(saved);
-          toast(`Este mapa ya tenía entrenamiento: récord ${meters(saved.record)}, generación ${saved.generation}.`);
+          toast(`Este mapa ya tenía entrenamiento: récord ${recordText(saved.record)}, generación ${saved.generation}.`);
         } else {
           sim.adopt({ brain: sim.brain });
           toast("Mapa nuevo: los coches conservan lo aprendido y empiezan en la generación 1.");
         }
-        ui.trainedKey = ui.tour ? TOUR_KEY : key;
+        ui.trainedKey = key;
         ui.mapChanged = false;
         chartsDirty = true;
       }
@@ -408,6 +472,7 @@
   // Récord batido en plena carrera (entrenando en un solo mapa): suena un aviso y, con
   // la cámara de director, se ve unos segundos a cámara lenta.
   function watchRecord() {
+    if (sim.mode !== "explore") return;
     if (sim.touring || sim.record <= 0 || recordGen === sim.generation) return;
     if (sim.leader.cells.size <= sim.record) return;
     recordGen = sim.generation;
@@ -502,7 +567,7 @@
     trails.reset(); // el turbo no dibuja: las estelas vuelven a empezar al terminar
     Object.assign(turbo, { on: true, fallback: false, started: performance.now(), gens: 0, mapKey: ui.trainedKey });
     const s = simSettings();
-    const options = { count: s.count, mutation: s.mutation, traffic: s.trafficCount, lights: s.lights, pedestrians: s.pedestrians };
+    const options = { count: s.count, mutation: s.mutation, traffic: s.trafficCount, lights: s.lights, pedestrians: s.pedestrians, mode: ui.learn };
     try {
       const worker = new Worker("js/worker.js");
       worker.onmessage = (e) => onTurboMessage(e.data);
@@ -645,6 +710,7 @@
     drawCrosswalks();
     drawStopLines();
     drawStart();
+    drawGoal();
     // Los coches van antes que el paisaje: en 3D los edificios altos pueden taparlos.
     // Los puentes tapan lo que pasa por debajo y quedan bajo lo que circula por encima.
     const lit = ui.mode === "train" && ui.trails && trails.world === w;
@@ -778,6 +844,46 @@
     ctx.stroke();
   }
 
+  // Modo destino: la ruta en línea de puntos y, donde termina, un círculo de llegada
+  // con un banderín a cuadros. En el editor se ve mientras se usa la herramienta Destino.
+  function drawGoal() {
+    if (ui.learn !== "goal" && !(ui.mode === "edit" && ui.tool === "goal")) return;
+    const route = stage().route();
+    if (!route) return;
+    const pts = route.points;
+    const end = pts[pts.length - 1];
+    const r = end.r || 52;
+    ctx.save();
+    ctx.strokeStyle = colors.accent;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([1, 17]);
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = colors.accent;
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = colors.node;
+    ctx.fillRect(end.x - 2, end.y - 48, 4, 48);
+    const size = 7;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 4; col++) {
+        ctx.fillStyle = (row + col) % 2 ? colors.node : colors.edge;
+        ctx.fillRect(end.x + 2 + col * size, end.y - 48 + row * size, size, size);
+      }
+    }
+    ctx.restore();
+  }
+
   // Línea de salida a cuadros atravesando la calzada, con flecha de sentido.
   function drawStart() {
     const { x, y, angle } = stage().start;
@@ -853,11 +959,14 @@
     if (sim.traffic) {
       for (const car of sim.traffic.cars) if (here(car)) paintCar(car, colors.traffic[car.color], true, car.speed < 0.4);
     }
+    // Conviviendo, el equipo del líder se ve entero; el resto, tenue como siempre.
+    const mates = sim.mode === "together" ? sim.mates : null;
     ctx.globalAlpha = 0.28;
     for (const car of sim.cars) {
-      if (car !== leader && here(car)) paintCar(car, car.damaged ? colors.wreck : colors.car, false);
+      if (car !== leader && here(car) && !(mates && mates.includes(car))) paintCar(car, car.damaged ? colors.wreck : colors.car, false);
     }
     ctx.globalAlpha = 1;
+    if (mates) for (const car of mates) if (car !== leader && here(car)) paintCar(car, car.damaged ? colors.wreck : colors.car, true);
     if (here(leader)) {
       drawSensors(leader);
       paintCar(leader, leader.damaged ? colors.wreck : colors.leader, true);
@@ -1071,11 +1180,19 @@
     const leader = sim.leader;
     setText(els.gen, String(sim.generation));
     setText(els.alive, `${sim.alive}/${sim.cars.length}`);
-    setText(els.best, meters(leader.cells.size));
+    const route = sim.mode === "goal" ? sim.route : null;
+    setText(els.best, route ? (leader.arrived ? "llegó" : `${Math.round((100 * leader.progress) / route.length)} %`) : meters(leader.cells.size));
     setText(els.record, recordText(sim.record));
     const heat = $("#s-heat");
-    heat.hidden = !sim.touring;
-    if (sim.touring && ui.tourMaps) setText(heat, `Mapa ${sim.heat + 1} de ${sim.worlds.length} · ${ui.tourMaps[sim.heat].name}`);
+    const notes = [];
+    if (sim.touring && ui.tourMaps) notes.push(`Mapa ${sim.heat + 1} de ${sim.worlds.length} · ${ui.tourMaps[sim.heat].name}`);
+    if (sim.mode === "goal") notes.push(route ? `Ruta de ${Math.round(route.length * METERS_PER_UNIT)} m hasta el destino` : "No hay ruta hasta el destino");
+    if (sim.mode === "together") {
+      const right = sim.lastSide === null ? null : Math.round(sim.lastSide * 100);
+      notes.push(right === null ? "Equipos de 6 coches que se cruzan" : `Circulan por la derecha el ${right} %, por la izquierda el ${100 - right} %`);
+    }
+    heat.hidden = !notes.length;
+    if (notes.length) setText(heat, notes.join(" · "));
     setText(els.kmh, `${Math.round(subject().kmh)} km/h`);
     if (sim.player) setText(els.you, meters(sim.player.cells.size));
     if (turbo.on) {
@@ -1472,6 +1589,21 @@
       }
       toast(cycleRoadType(near.segment));
       mapEdited();
+    } else if (ui.tool === "goal") {
+      if (world.goal && distance(at, world.goal) < 45) {
+        world.goal = null;
+        toast("Destino quitado: los coches irán al punto más lejano de la salida.");
+        mapEdited();
+        return;
+      }
+      const near = g.nearestSegment(at, ROAD_WIDTH / 2);
+      if (!near) {
+        toast("Toca sobre una calle para poner el destino.");
+        return;
+      }
+      world.goal = { x: Math.round(near.point.x), y: Math.round(near.point.y) };
+      toast(ui.learn === "goal" ? "Destino puesto." : "Destino puesto. Elige «Ir a un destino» en Ajustes para entrenar con él.");
+      mapEdited();
     }
   }
 
@@ -1535,6 +1667,12 @@
     $("#hour").value = ui.hour;
     $("#weather").value = ui.weather;
     $("#tour").checked = ui.tour;
+    $("#learn").value = ui.learn;
+    $("#learn-help").textContent = LEARN_HELP[ui.learn];
+    $("#brain-legend").textContent =
+      ui.learn === "goal"
+        ? "7 sensores + rojo + obstáculo + rumbo de la ruta → 8 neuronas → acelerar, girar, frenar"
+        : "7 sensores + rojo + obstáculo delante → 6 neuronas → acelerar, girar, frenar";
     $("#finish").disabled = !ui.selected;
     $("#hint").innerHTML = HINTS[ui.tool];
     $("#count").value = sim.count;
@@ -1649,6 +1787,7 @@
   );
   $("#next").addEventListener("click", () => sim.finishHeat());
   $("#tour").addEventListener("change", (e) => setTour(e.target.checked));
+  $("#learn").addEventListener("change", (e) => setLearn(e.target.value));
   $("#turbo").addEventListener("click", () => (turbo.on ? stopTurbo() : startTurbo()));
   $("#follow").addEventListener("click", () => setFollow(!ui.follow));
   $("#toggle-brain").addEventListener("click", () => {
@@ -1707,6 +1846,7 @@
   });
   armed($("#clear"), "Toca otra vez para vaciar", () => {
     world.graph.clear();
+    world.goal = null;
     ui.realMap = null;
     ui.selected = null;
     mapEdited();
@@ -1787,13 +1927,18 @@
 
   function currentMapData() {
     const { x, y, angle } = world.start;
-    return { ...world.graph.toJSON(), start: { x: Math.round(x), y: Math.round(y), angle } };
+    const data = { ...world.graph.toJSON(), start: { x: Math.round(x), y: Math.round(y), angle } };
+    if (world.goal) data.goal = { x: Math.round(world.goal.x), y: Math.round(world.goal.y) };
+    return data;
   }
+
+  const validGoal = (g) => !!g && Number.isFinite(g.x) && Number.isFinite(g.y);
 
   // realKey: el barrio real del que sale el mapa (para mostrar el crédito de OSM).
   function openMap(data, realKey = null) {
     world.graph = Graph.fromJSON(data);
     world.start = { ...data.start };
+    world.goal = validGoal(data.goal) ? { x: data.goal.x, y: data.goal.y } : null;
     ui.realMap = realKey;
     ui.selected = null;
     mapEdited();
@@ -1883,9 +2028,9 @@
     }
     const name = $("#map-name").value.trim() || "Mi mapa";
     const map = currentMapData();
-    const key = mapKey(map);
+    const key = keyFor(map, ui.learn);
     const training = key === ui.trainedKey && sim.brain ? sim.training() : brainStore.get(key);
-    const file = { formato: "carreteras-neuronales", version: 1, nombre: name, mapa: map, entrenamiento: training || null };
+    const file = { formato: "carreteras-neuronales", version: 1, nombre: name, mapa: map, modo: ui.learn, entrenamiento: training || null };
     const url = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -1909,6 +2054,7 @@
       [s[0], s[1]].every((i) => Number.isInteger(i) && i >= 0 && i < n) &&
       s[0] !== s[1];
     if (!m.segments.every(validSegment)) return false;
+    if (m.goal !== undefined && !validGoal(m.goal)) return false;
     return finite(m.start.x) && finite(m.start.y) && finite(m.start.angle);
   }
 
@@ -1921,8 +2067,11 @@
       const data = JSON.parse(await file.text());
       const map = data.mapa || data.map;
       if (!validMap(map)) throw new Error("mapa no válido");
-      const training = data.entrenamiento && validBrain(data.entrenamiento.brain) ? data.entrenamiento : null;
-      if (training) brainStore.put(mapKey(map), training);
+      // El cerebro se guarda para el modo con el que se entrenó.
+      const brain = data.entrenamiento && data.entrenamiento.brain;
+      const mode = validBrain(brain) ? (data.modo === "together" ? "together" : "explore") : validBrain(brain, GOAL_INPUTS) ? "goal" : null;
+      const training = mode ? data.entrenamiento : null;
+      if (training) brainStore.put(keyFor(map, mode), training);
       openMap(map);
       if (data.nombre) $("#map-name").value = String(data.nombre).slice(0, 40);
       toast(`Mapa «${data.nombre || file.name}» importado${training ? " con su cerebro entrenado" : ""}.`);

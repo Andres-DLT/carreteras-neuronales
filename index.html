@@ -651,7 +651,7 @@
             <span class="legend"><i class="pos">+</i> / <i class="neg">−</i> pesos</span>
           </div>
           <canvas id="net" aria-hidden="true"></canvas>
-          <span class="legend">7 sensores + rojo + obstáculo delante → 6 neuronas → acelerar, girar, frenar</span>
+          <span class="legend" id="brain-legend">7 sensores + rojo + obstáculo delante → 6 neuronas → acelerar, girar, frenar</span>
         </section>
 
         <section class="card" id="causes-card" aria-label="Causas de eliminación por generación">
@@ -722,6 +722,15 @@
             <small>Cruzan con el semáforo de los coches en rojo, o cada 12 s en mitad de las calles largas. Atropellar elimina al coche.</small>
           </div>
           <div class="field">
+            <label for="learn">Qué aprenden</label>
+            <select id="learn">
+              <option value="explore">Explorar: recorrer la mayor parte de la calle</option>
+              <option value="goal">Ir a un destino</option>
+              <option value="together">Convivir: equipos que se cruzan</option>
+            </select>
+            <small id="learn-help"></small>
+          </div>
+          <div class="field">
             <label class="check" for="tour"><input type="checkbox" id="tour"> Entrenamiento todoterreno</label>
             <small>Cada generación corre en tu mapa, una ciudad al azar y dos barrios reales; gana quien conduce bien en todos. El récord pasa a ser el % medio de calle explorada.</small>
           </div>
@@ -759,6 +768,7 @@
             <button data-tool="add" aria-pressed="true">Trazar</button>
             <button data-tool="erase" aria-pressed="false">Borrar</button>
             <button data-tool="start" aria-pressed="false">Salida</button>
+            <button data-tool="goal" aria-pressed="false">Destino</button>
             <button data-tool="type" aria-pressed="false">Tipo</button>
           </div>
           <button class="btn" id="finish" disabled><span class="long">Terminar tramo</span><span class="short">Terminar</span></button>
