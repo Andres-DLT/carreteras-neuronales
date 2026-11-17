@@ -13,7 +13,7 @@ onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "start") {
     // Con la gira todoterreno llegan todos sus mapas; si no, solo el actual.
-    const worlds = (msg.tour || [msg.map]).map((m) => new World(Graph.fromJSON(m), m.start));
+    const worlds = (msg.tour || [msg.map]).map((m) => new World(Graph.fromJSON(m), m.start, m.goal));
     sim = new Simulation(worlds[0], { ...msg.options, ...msg.training, worlds });
     sim.onGeneration = ({ fitness, improved }) => {
       postMessage({ type: "generation", training: sim.training(), fitness, improved });

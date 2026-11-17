@@ -37,6 +37,18 @@ y abre http://localhost:8765.
   torcidas y dobladas, y según la suerte una avenida, calles de sentido único, una
   glorieta y un puente. **Barrios reales**: calles de verdad sacadas de OpenStreetMap
   (ver más abajo).
+- **Qué aprenden** (en *Ajustes*): cada modo guarda su propio entrenamiento.
+  - *Explorar*, el de siempre: gana quien más terreno distinto recorre.
+  - *Ir a un destino*: gana quien más avanza por la ruta más corta hasta el destino
+    y, si llegan varios, quien llega antes. El destino se pone con la herramienta
+    **Destino** del editor (sin él, van al punto más lejano de la salida) y la ruta
+    se ve punteada en el mapa. El cerebro recibe dos entradas más, que le dicen hacia
+    dónde sigue la ruta, así que usa una red aparte (11 → 8 → 4).
+  - *Convivir*: cada cerebro conduce un equipo de 6 coches repartidos por el mapa,
+    la mitad en sentido contrario, que pueden chocar entre sí y no tienen más tráfico.
+    Puntúa la media del equipo, así que solo prosperan las formas de conducir que
+    conviven consigo mismas. El marcador dice qué parte circula por la derecha: si se
+    aleja del 50 %, la población se ha inventado una norma.
 - **Entrenamiento todoterreno** (en *Ajustes*): cada generación corre una manga en tu
   mapa, otra en una ciudad al azar fija y otra en cada barrio real de la gira, con los
   mismos cerebros. Gana quien explora más proporción de calle sumando todas las mangas,
@@ -135,7 +147,7 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 |---|---|
 | `js/math.js` | Intersección de segmentos, punto en polígono, proyecciones. |
 | `js/graph.js` | El grafo del mapa: puntos y tramos con su tipo (calle, avenida, sentido único, glorieta, puente). |
-| `js/world.js` | Convierte cada tramo en un polígono redondeado y calcula la unión de todos para obtener los bordes; puentes en un nivel aparte; marcas viales de cada tipo; rejilla espacial. |
+| `js/world.js` | Ruta más corta hasta el destino y salidas repartidas del modo convivir. Convierte cada tramo en un polígono redondeado y calcula la unión de todos para obtener los bordes; puentes en un nivel aparte; marcas viales de cada tipo; rejilla espacial. |
 | `js/maps.js` | Plantillas de mapa y generador de ciudades al azar con semilla. |
 | `js/real-maps.js` | Barrios reales convertidos de OpenStreetMap. |
 | `js/network.js` | Red neuronal de propagación hacia delante (9 → 6 → 4) con activación escalón, mutación y cruce. |
@@ -150,7 +162,7 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/audio.js` | Sonido sintetizado con Web Audio: motor, rodadura, lluvia, choques y aviso de récord. |
 | `vendor/three.min.js` | [three.js](https://threejs.org) r159 (licencia MIT), el motor con el que se dibuja la vista 3D. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
-| `js/sim.js` | El coche que conduces tú (fuera de la población). Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
+| `js/sim.js` | Los tres modos de aprendizaje y el coche que conduces tú (fuera de la población). Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
 | `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |
 
 **Entradas de la red**: las 7 distancias de los sensores, más la cercanía de un
