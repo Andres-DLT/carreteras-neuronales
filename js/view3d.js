@@ -26,8 +26,30 @@ const V3 = {
   GHOST_FAR: 110, // y de ahí a aquí va creciendo hasta su tamaño
   MAX_DETAILED: 40,
   MAX_WALKERS: 400,
+  TRAFFIC_STYLES: ["hatch", "suv", "sedan", "van", "hatch", "sedan"], // carrocerías del tráfico, por turno
+  SHOTS: ["chase", "side", "drone", "front", "chase", "high"], // planos por los que pasa la cámara de director
+  SHOT_FRAMES: 420, // lo que dura cada uno (7 s)
   WALLS: ["#f2efe6", "#ece2cf", "#e9d9c3", "#f4e6c8", "#dfe5e8", "#e8cdbb", "#d9d2c5", "#f0f0ee"],
   ROOFS: ["#b5573a", "#5f6b75", "#8a6a4a"],
+  // Horas del día: cielo, niebla, luz del sol (o de la luna) y cuánto se encienden las
+  // ventanas (windows) y las farolas y los faros (lamps).
+  HOURS: {
+    day: {
+      zenith: "#3f8fe0", horizon: "#cfe4f5", fog: "#cfe4f5", hemiSky: "#cfe2ff", hemiGround: "#6b7a4c", hemi: 1.5,
+      sun: "#fff0dc", sunPower: 3.1, sunDir: [-0.6, 1.15, -0.8], exposure: 0.95, windows: 0, lamps: 0, stars: false,
+      orb: "#fff6da", orbSize: 1700,
+    },
+    sunset: {
+      zenith: "#31508f", horizon: "#ffab6b", fog: "#eeb08a", hemiSky: "#f2c4a4", hemiGround: "#6a5644", hemi: 1.35,
+      sun: "#ff9248", sunPower: 3, sunDir: [-0.92, 0.24, -0.45], exposure: 1.12, windows: 0.9, lamps: 0.55, stars: false,
+      orb: "#ffb066", orbSize: 2600,
+    },
+    night: {
+      zenith: "#03060f", horizon: "#1a2740", fog: "#141e30", hemiSky: "#5f6f99", hemiGround: "#14181a", hemi: 0.9,
+      sun: "#bccaff", sunPower: 0.7, sunDir: [-0.6, 1.15, -0.8], exposure: 1.25, windows: 1.5, lamps: 1, stars: true,
+      orb: "#e8eeff", orbSize: 1000,
+    },
+  },
 };
 
 // Altura del tablero de un puente a `t` unidades de su primer extremo.
@@ -193,7 +215,12 @@ class View3D {
     this.dummy = new THREE.Object3D();
     this.tmpColor = new THREE.Color();
     this.frame = 0;
-    this.night = null;
+    this.night = false;
+    this.quality = 0; // 0 es la máxima; baja sola si el equipo no puede con ella
+    this.sampled = 0;
+    this.fogScale = 1;
+    this.glowPower = 0;
+    this.headlampPower = 0;
     this.colors = null;
     this.worldKey = null;
     this.worldGroup = null;
@@ -205,6 +232,8 @@ class View3D {
     this.makeLights();
     this.makeGround();
     this.makeActors();
+    this.makeWeather();
+    if (this.makeFx) this.makeFx(); // chispas, humo y marcas de frenada (view3d-fx.js)
   }
 
   // ---------- Texturas dibujadas en un lienzo ----------
@@ -395,9 +424,11 @@ class View3D {
         map: this.tex.beam, color: 0xfff1cf, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending,
         depthWrite: false, toneMapped: false, ...decal(5),
       }),
-      paint: std({ roughness: 0.36, metalness: 0.25 }),
-      trim: std({ vertexColors: true, roughness: 0.3, metalness: 0.3 }),
-      carLights: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+      paint: std({ roughness: 0.34, metalness: 0.12, envMapIntensity: 0.55 }),
+      trim: std({ vertexColors: true, roughness: 0.12, metalness: 0.4, envMapIntensity: 1.2 }),
+      carLights: new THREE.MeshBasicMaterial({ color: 0xfff6d8, toneMapped: false }),
+      tail: new THREE.MeshBasicMaterial({ toneMapped: false }),
+      wheel: std({ vertexColors: true, roughness: 0.65, metalness: 0.2 }),
       ghost: std({ roughness: 0.5, transparent: true, opacity: 0.14, depthWrite: false }),
       shirt: std({ roughness: 0.9 }),
       skin: std({ color: 0xd9b08c, roughness: 0.8 }),
@@ -485,32 +516,128 @@ class View3D {
     this.scene.add(this.ground);
   }
 
-  // Día con el tema claro, noche con el oscuro. Los colores de los coches son los del tema.
-  setTheme(colors) {
+  // Hora del día y clima. Con la hora en "auto" es de día con el tema claro y de noche
+  // con el oscuro. Los colores de los coches son siempre los del tema.
+  setTheme(colors, time = "auto", weather = "clear") {
     this.colors = colors;
-    const night = !!colors.night;
-    if (night !== this.night) {
-      this.night = night;
-      this.paintSky(night ? "#03060f" : "#3f8fe0", night ? "#1a2740" : "#cfe4f5");
-      this.scene.fog.color.set(night ? "#141e30" : "#cfe4f5");
-      this.stars.visible = night;
-      this.hemi.color.set(night ? "#5f6f99" : "#cfe2ff");
-      this.hemi.groundColor.set(night ? "#14181a" : "#6b7a4c");
-      this.hemi.intensity = night ? 0.9 : 1.5;
-      this.sun.color.set(night ? "#bccaff" : "#fff0dc");
-      this.sun.intensity = night ? 0.7 : 3.1;
-
-      this.renderer.toneMappingExposure = night ? 1.25 : 0.95;
-      this.mat.walls.emissiveIntensity = night ? 1.5 : 0;
-      this.mat.bulb.color.set(night ? "#ffe6b0" : "#d9dcdc");
-      this.headlamp.visible = night;
-      this.headlamp.intensity = night ? 9 : 0;
-      this.mat.carLights.color.setScalar(night ? 1 : 0.8);
+    const hour = V3.HOURS[time] ? time : colors.night ? "night" : "day";
+    const key = hour + "|" + weather;
+    if (key !== this.ambience) {
+      this.ambience = key;
+      this.applyAmbience(V3.HOURS[hour], weather);
     }
     this.mat.rays.color.set(colors.leader);
     this.mat.hits.color.set(colors.leader);
     this.mat.path.color.set(colors.leader);
     this.signalColors = ["red", "yellow", "green"].map((k) => new THREE.Color(colors.signal[k]));
+  }
+
+  applyAmbience(p, weather) {
+    const wet = weather === "rain";
+    const cover = weather === "fog" ? 0.9 : wet ? 0.75 : 0; // cuánto tapan las nubes
+    const cloud = new THREE.Color(p.lamps >= 1 ? "#161b24" : p.lamps > 0 ? "#6f6a70" : "#aab3ba");
+    const tint = (hex, k = 0.85) => new THREE.Color(hex).lerp(cloud, cover * k);
+    this.paintSky(tint(p.zenith), tint(p.horizon));
+    if (this.envTarget) this.envTarget.dispose();
+    this.envTarget = this.pmrem.fromScene(this.envScene, 0.03, 10, 20000);
+    const env = this.envTarget.texture;
+    for (const m of [this.mat.paint, this.mat.trim, this.mat.asphalt, this.mat.towers, this.mat.water]) {
+      if (!m) continue; // las torres y el agua se crean con la primera ciudad
+      const next = m === this.mat.asphalt && !wet ? null : env;
+      if (!!m.envMap !== !!next) m.needsUpdate = true;
+      m.envMap = next;
+    }
+    this.scene.fog.color.copy(tint(p.fog));
+    this.fogScale = weather === "fog" ? 0.16 : wet ? 0.5 : 1;
+    this.stars.visible = p.stars && cover === 0;
+    this.hemi.color.copy(tint(p.hemiSky, 0.5));
+    this.hemi.groundColor.set(p.hemiGround);
+    this.hemi.intensity = p.hemi * (1 + cover * 0.2);
+    this.sun.color.copy(tint(p.sun, 0.7));
+    this.sun.intensity = p.sunPower * (1 - cover * 0.8);
+    this.sunOffset.set(p.sunDir[0], p.sunDir[1], p.sunDir[2]).normalize();
+    this.renderer.toneMappingExposure = p.exposure;
+    this.orb.visible = cover === 0;
+    this.orb.material.color.set(p.orb);
+    this.orb.position.copy(this.sunOffset).multiplyScalar(13500);
+    this.orb.scale.setScalar(p.orbSize);
+
+    // Luces encendidas: ventanas, farolas y faros.
+    this.night = p.lamps > 0;
+    this.mat.walls.emissiveIntensity = p.windows;
+    if (this.mat.towers) this.mat.towers.emissiveIntensity = p.windows;
+    this.mat.bulb.color.set(this.night ? "#ffe6b0" : "#d9dcdc");
+    this.mat.pool.opacity = Math.min(1, 0.5 * p.lamps * (wet ? 1.6 : 1));
+    this.mat.beam.opacity = 0.8 * p.lamps;
+    this.mat.carLights.color.set(this.night ? "#fff6d8" : "#cfcfc4");
+    this.headlamp.visible = this.night;
+    this.headlampPower = 9 * p.lamps;
+    this.glowPower = 1.1 * p.lamps;
+
+    // Con lluvia, el suelo mojado es más oscuro y brilla.
+    this.mat.asphalt.roughness = wet ? 0.16 : 0.88;
+    this.mat.asphalt.metalness = wet ? 0.25 : 0;
+    this.mat.asphalt.envMapIntensity = wet ? 1.3 : 1;
+    this.mat.asphalt.color.setScalar(wet ? 0.55 : 1);
+    this.mat.marks.roughness = wet ? 0.35 : 0.75;
+    this.mat.sidewalk.roughness = wet ? 0.5 : 0.92;
+    this.mat.sidewalk.color.setScalar(wet ? 0.78 : 1);
+    this.mat.roofs.roughness = wet ? 0.45 : 0.82;
+    this.rain.visible = wet;
+  }
+
+  // El sol o la luna en el cielo, y la lluvia: trazos que caen alrededor de la cámara.
+  makeWeather() {
+    this.orb = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: this.tex.pool, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, toneMapped: false })
+    );
+    this.orb.renderOrder = -8;
+    this.sky.add(this.orb);
+
+    // El cielo, visto como entorno: lo reflejan la pintura y los cristales de los
+    // coches y, cuando llueve, el asfalto mojado.
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.envScene = new THREE.Scene();
+    this.envScene.add(new THREE.Mesh(this.sky.geometry, this.sky.material));
+    this.envTarget = null;
+
+    const rng = seededRandom(31);
+    const count = this.small ? 500 : 1100;
+    this.rainDrops = new Float32Array(count * 3);
+    for (let i = 0; i < count * 3; i += 3) {
+      this.rainDrops[i] = (rng() * 2 - 1) * 300;
+      this.rainDrops[i + 1] = rng() * 320;
+      this.rainDrops[i + 2] = (rng() * 2 - 1) * 300;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(count * 6), 3));
+    this.rain = new THREE.LineSegments(
+      geo,
+      new THREE.LineBasicMaterial({ color: 0xd4e2ff, transparent: true, opacity: 0.5, depthWrite: false, fog: false, toneMapped: false })
+    );
+    this.rain.frustumCulled = false;
+    this.rain.visible = false;
+    this.rain.renderOrder = 6;
+    this.scene.add(this.rain);
+  }
+
+  updateRain() {
+    if (!this.rain.visible) return;
+    const drops = this.rainDrops;
+    const pos = this.rain.geometry.getAttribute("position");
+    for (let i = 0, k = 0; i < drops.length; i += 3, k += 2) {
+      drops[i + 1] -= 13;
+      if (drops[i + 1] < 0) drops[i + 1] += 320;
+      pos.setXYZ(k, drops[i], drops[i + 1], drops[i + 2]);
+      pos.setXYZ(k + 1, drops[i] + 4, drops[i + 1] + 30, drops[i + 2]);
+    }
+    pos.needsUpdate = true;
+    // La lluvia cae en una caja entre la cámara y lo que mira.
+    this.rain.position.set(
+      (this.camPos.x + this.camTarget.x) / 2,
+      Math.max(0, Math.min(this.camPos.y, 700) - 200),
+      (this.camPos.z + this.camTarget.z) / 2
+    );
   }
 
   // ---------- Lo que se mueve: coches, peatones, sensores, estelas ----------
@@ -523,12 +650,28 @@ class View3D {
       this.scene.add(mesh);
       return mesh;
     };
-    const car = this.carGeometries();
-    this.carPaint = dyn(new THREE.InstancedMesh(car.paint, this.mat.paint, V3.MAX_DETAILED), true);
-    this.carTrim = dyn(new THREE.InstancedMesh(car.trim, this.mat.trim, V3.MAX_DETAILED), true);
-    this.carLamps = dyn(new THREE.InstancedMesh(car.lights, this.mat.carLights, V3.MAX_DETAILED), false);
-    this.ghosts = dyn(new THREE.InstancedMesh(car.paint, this.mat.ghost, V3.MAX_GHOSTS), false);
+    // Coches con detalle (el líder, el que conduces tú y el tráfico): un juego de mallas
+    // por carrocería, y las ruedas aparte porque giran. El resto de la población son
+    // siluetas translúcidas.
+    this.kit = buildCarKit();
+    this.carSets = {};
+    for (const style of CAR_STYLES) {
+      const k = this.kit[style];
+      this.carSets[style] = {
+        paint: dyn(new THREE.InstancedMesh(k.paint, this.mat.paint, V3.MAX_DETAILED), true),
+        trim: dyn(new THREE.InstancedMesh(k.trim, this.mat.trim, V3.MAX_DETAILED), true),
+        head: dyn(new THREE.InstancedMesh(k.head, this.mat.carLights, V3.MAX_DETAILED), false),
+        tail: dyn(new THREE.InstancedMesh(k.tail, this.mat.tail, V3.MAX_DETAILED), false),
+      };
+    }
+    this.wheels = dyn(new THREE.InstancedMesh(this.kit.wheel, this.mat.wheel, V3.MAX_DETAILED * 4), true);
+    this.ghosts = dyn(new THREE.InstancedMesh(this.kit.sedan.paint, this.mat.ghost, V3.MAX_GHOSTS), false);
     this.ghosts.renderOrder = 5;
+    this.wheelDummy = new THREE.Object3D();
+    this.wheelDummy.rotation.order = "YXZ"; // primero rueda sobre su eje, luego tuerce
+    this.carMatrix = new THREE.Matrix4();
+    this.tmpMatrix = new THREE.Matrix4();
+    this.motion = new WeakMap(); // por coche: giro acumulado de las ruedas y dirección suavizada
 
     const beam = new THREE.PlaneGeometry(1, 1);
     beam.rotateX(-Math.PI / 2);
@@ -580,62 +723,12 @@ class View3D {
     this.scene.add(this.trailPlane, this.pathMesh);
   }
 
-  // Un coche de tres volúmenes: carrocería con capó y maletero, cabina acristalada con
-  // techo, cuatro ruedas, faros y pilotos. Mira hacia +x, como en la simulación.
-  carGeometries() {
-    const profile = (points) => {
-      const shape = new THREE.Shape();
-      points.forEach(([x, y], i) => (i ? shape.lineTo(x, y) : shape.moveTo(x, y)));
-      shape.closePath();
-      return shape;
-    };
-    const extrude = (points, width, bevel) => {
-      const geo = new THREE.ExtrudeGeometry(profile(points), {
-        depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.8, bevelSegments: 2, steps: 1,
-      });
-      geo.translate(0, 0, -(width - bevel * 2) / 2);
-      return geo;
-    };
-    const body = extrude(
-      [[-23, 4.4], [-22.6, 8.2], [-20.6, 9.7], [-12, 9.9], [9, 9.7], [18.5, 8.8], [22.6, 7.3], [23, 4.6], [22, 3.2], [-22, 3.2]],
-      CAR_WIDTH, 1.3
-    );
-    const roof = new THREE.BoxGeometry(12.6, 0.9, CAR_WIDTH - 6.6);
-    roof.translate(-3.7, 15.2, 0);
-    const cabin = extrude([[-15.6, 9.6], [-10.6, 14.9], [2.9, 15.1], [10, 9.6]], CAR_WIDTH - 5, 0.7);
-    const parts = [{ geo: cabin, color: "#18222c" }];
-    for (const x of [-15.2, 15.2]) {
-      for (const z of [-1, 1]) {
-        const tyre = new THREE.CylinderGeometry(4.5, 4.5, 3.6, 18);
-        tyre.rotateX(Math.PI / 2);
-        tyre.translate(x, 4.5, z * (CAR_WIDTH / 2 - 1.5));
-        const hub = new THREE.CylinderGeometry(2.4, 2.4, 3.9, 12);
-        hub.rotateX(Math.PI / 2);
-        hub.translate(x, 4.5, z * (CAR_WIDTH / 2 - 1.5));
-        parts.push({ geo: tyre, color: "#141414" }, { geo: hub, color: "#9da2a6" });
-      }
-    }
-    const lights = [];
-    for (const z of [-8, 8]) {
-      const front = new THREE.BoxGeometry(0.8, 2.2, 5.6);
-      front.translate(CAR_LENGTH / 2 + 0.25, 7.3, z);
-      const rear = new THREE.BoxGeometry(0.8, 2, 5.6);
-      rear.translate(-CAR_LENGTH / 2 - 0.25, 7.9, z);
-      lights.push({ geo: front, color: "#fff6d8" }, { geo: rear, color: "#ff2a1c" });
-    }
-    return {
-      paint: mergeGeometries([{ geo: body }, { geo: roof }]),
-      trim: mergeGeometries(parts),
-      lights: mergeGeometries(lights),
-    };
-  }
-
   // ---------- Escena de un mapa ----------
   // Devuelve (y guarda) todo lo que no se mueve de un mapa. `key` cambia cuando cambia
   // el mapa o lo que se pinta sobre él (pasos de cebra, líneas de detención, salida).
   setWorld(world, options) {
     const { x, y, angle } = world.start;
-    const key = [world.version, options.pedestrians, options.lights, Math.round(x), Math.round(y), angle.toFixed(3)].join("|");
+    const key = [world.version, options.style, options.pedestrians, options.lights, Math.round(x), Math.round(y), angle.toFixed(3)].join("|");
     let entry = this.cache.get(world);
     if (!entry || entry.key !== key) {
       if (entry) this.disposeGroup(entry.group);
@@ -656,7 +749,9 @@ class View3D {
       this.worldGroup = entry.group;
       this.signals = entry.signals;
       this.pools = entry.pools;
+      this.strollers = entry.strollers;
       this.camReady = false;
+      if (this.clearFx) this.clearFx();
     }
     this.world = world;
     this.pools.visible = this.night;
@@ -698,11 +793,16 @@ class View3D {
 
     add(this.buildMarkings(world, options), this.mat.marks);
     this.buildBridges(world, group);
-    this.buildHouses(world, group);
-    this.buildTrees(world, group);
+    // Edificios, monumento, árboles y mobiliario según el barrio (view3d-city.js).
+    const style = CITY[options.style] ? options.style : "suburb";
+    const plan = this.cityPlan(world, CITY[style]);
+    this.buildHouses(world, group, style, plan);
+    const park = this.buildLandmark(world, group, style, plan);
+    this.buildTrees(world, group, this.streetTrees(world, style).concat(park), plan.clear);
+    this.buildFurniture(world, group);
     const pools = this.buildLamps(world, group);
     const signals = this.buildSignals(world, group);
-    return { group, pools, signals };
+    return { group, pools, signals, strollers: this.buildStrollers(world) };
   }
 
   // Los polígonos del suelo tienen que ir en el sentido que deja la cara hacia arriba.
@@ -852,74 +952,6 @@ class View3D {
     make(marks, this.mat.marks, false);
   }
 
-  // Casas: paredes con ventanas, tejado a cuatro aguas con alero (o azotea) y chimenea.
-  buildHouses(world, group) {
-    const walls = new MeshBuilder();
-    const roofs = new MeshBuilder();
-    const wallTones = V3.WALLS.map((c) => new THREE.Color(c));
-    const roofTones = V3.ROOFS.map((c) => new THREE.Color(c));
-    const flatTone = new THREE.Color("#8f918c");
-    const brick = new THREE.Color("#8c4a3a");
-    for (const b of world.scenery.buildings) {
-      const hash = (Math.imul(Math.round(b.c.x), 73856093) ^ Math.imul(Math.round(b.c.y), 19349663)) >>> 0;
-      const flat = hash % 5 === 0;
-      const floors = flat ? 2 + (hash % 7 === 0 ? 1 : 0) : b.height > 0.72 ? 2 : 1;
-      const H = floors * V3.FLOOR + 3;
-      b.top3d = flat ? H + 4 : H + Math.min(b.w, b.d) * 0.3; // hasta dónde llega, con tejado
-      const u = b.u;
-      const n = { x: -u.y, y: u.x };
-      const tone = wallTones[(hash >>> 3) % wallTones.length];
-      const normals = [[-n.x, 0, -n.y], [u.x, 0, u.y], [n.x, 0, n.y], [-u.x, 0, -u.y]];
-      b.corners.forEach((p, i) => {
-        const q = b.corners[(i + 1) % 4];
-        const bays = Math.max(1, Math.round(distance(p, q) / V3.BAY));
-        const u0 = ((hash >>> (i * 2)) % 4) / 4;
-        const v0 = ((hash >>> (i * 2 + 8)) % 4) / 4;
-        walls.face(
-          [[p.x, 0, p.y], [q.x, 0, q.y], [q.x, H, q.y], [p.x, H, p.y]], normals[i],
-          [[u0, v0], [u0 + bays / 4, v0], [u0 + bays / 4, v0 + floors / 4], [u0, v0 + floors / 4]], tone
-        );
-      });
-
-      const at = (i, j, y) => [b.c.x + u.x * i + n.x * j, y, b.c.y + u.y * i + n.y * j];
-      if (flat) {
-        // Azotea con un pretil alrededor.
-        const hw = b.w / 2, hd = b.d / 2;
-        roofs.face([at(-hw, -hd, H), at(hw, -hd, H), at(hw, hd, H), at(-hw, hd, H)], [0, 1, 0], [[0, 0], [b.w / 40, 0], [b.w / 40, b.d / 40], [0, b.d / 40]], flatTone);
-        for (const [cx, cy, lu, ln] of [[0, -hd + 1.5, hw, 1.5], [0, hd - 1.5, hw, 1.5], [-hw + 1.5, 0, 1.5, hd], [hw - 1.5, 0, 1.5, hd]]) {
-          const c = { x: b.c.x + u.x * cx + n.x * cy, y: b.c.y + u.y * cx + n.y * cy };
-          walls.box(c, u, lu, ln, H, H + 4, tone);
-        }
-        continue;
-      }
-      const over = 5; // alero
-      const hw = b.w / 2 + over, hd = b.d / 2 + over;
-      const alongU = b.w >= b.d;
-      const rise = Math.min(b.w, b.d) * 0.3;
-      const ridge = Math.abs(b.w - b.d) / 2 + 3;
-      const eaves = [at(-hw, -hd, H), at(hw, -hd, H), at(hw, hd, H), at(-hw, hd, H)];
-      const r0 = alongU ? at(-ridge, 0, H + rise) : at(0, -ridge, H + rise);
-      const r1 = alongU ? at(ridge, 0, H + rise) : at(0, ridge, H + rise);
-      const faces = alongU
-        ? [[eaves[0], eaves[1], r1, r0], [eaves[1], eaves[2], r1], [eaves[2], eaves[3], r0, r1], [eaves[3], eaves[0], r0]]
-        : [[eaves[0], eaves[1], r0], [eaves[1], eaves[2], r1, r0], [eaves[2], eaves[3], r1], [eaves[3], eaves[0], r0, r1]];
-      const tint = roofTones[b.roof % roofTones.length];
-      for (const pts of faces) this.roofFace(roofs, pts, tint);
-      if (hash % 3 === 0) {
-        const c = alongU ? { x: b.c.x + u.x * ridge * 0.5 + n.x * b.d * 0.2, y: b.c.y + u.y * ridge * 0.5 + n.y * b.d * 0.2 }
-          : { x: b.c.x + n.x * ridge * 0.5 + u.x * b.w * 0.2, y: b.c.y + n.y * ridge * 0.5 + u.y * b.w * 0.2 };
-        roofs.box(c, u, 4, 4, H + rise * 0.3, H + rise + 9, brick);
-      }
-    }
-    for (const [builder, material] of [[walls, this.mat.walls], [roofs, this.mat.roofs]]) {
-      if (builder.empty) continue;
-      const mesh = new THREE.Mesh(builder.geometry(), material);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-    }
-  }
-
   // Una vertiente del tejado: las tejas corren paralelas al alero (los dos primeros puntos).
   roofFace(builder, pts, color) {
     const [a, b] = pts;
@@ -941,8 +973,9 @@ class View3D {
   }
 
   // Árboles: tronco y una copa hecha de dos masas irregulares, cada árbol con su tono.
-  buildTrees(world, group) {
-    const trees = world.scenery.trees;
+  buildTrees(world, group, more = [], clear = null) {
+    // Los del paisaje (menos los que pisan el sitio del monumento) y los de las aceras.
+    const trees = world.scenery.trees.filter((t) => !clear || distance(t, clear) > clear.r + t.r).concat(more);
     if (!trees.length) return;
     if (!this.treeGeo) {
       const trunk = new THREE.CylinderGeometry(0.75, 1, 1, 7);
@@ -1113,11 +1146,42 @@ class View3D {
 
   // ---------- Cada fotograma ----------
   resize(width, height, dpr) {
-    this.renderer.setPixelRatio(this.small ? Math.min(dpr, 1.5) : dpr);
+    this.size = { width, height, dpr };
+    // Menos píxeles cuanto más baja es la calidad.
+    const cap = [this.small ? 1.5 : 2, 1.25, 1, 0.75][this.quality];
+    this.renderer.setPixelRatio(Math.min(dpr, cap));
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / Math.max(1, height);
     this.camera.updateProjectionMatrix();
     this.viewHeight = height;
+  }
+
+  // Calidad automática: si los fotogramas tardan de forma sostenida más de 34 ms (menos
+  // de 30 por segundo), baja un escalón: primero sombras más ligeras, luego sin sombras
+  // y por último menos resolución. No vuelve a subir sola, para no ir a tirones.
+  tuneQuality() {
+    const now = performance.now();
+    const dt = now - (this.lastFrame || now);
+    this.lastFrame = now;
+    if (document.hidden || dt <= 0 || dt > 200) return; // pestaña en segundo plano, o un parón suelto
+    this.frameMs = this.frameMs === undefined ? dt : this.frameMs * 0.96 + dt * 0.04;
+    if (++this.sampled < 150 || this.quality >= 3) return;
+    if (this.frameMs > 34) this.setQuality(this.quality + 1);
+  }
+
+  setQuality(level) {
+    this.quality = level;
+    this.sampled = 0;
+    this.frameMs = undefined;
+    this.sun.castShadow = level < 2;
+    if (level === 1) {
+      this.sun.shadow.mapSize.set(1024, 1024);
+      if (this.sun.shadow.map) {
+        this.sun.shadow.map.dispose();
+        this.sun.shadow.map = null;
+      }
+    }
+    if (this.size) this.resize(this.size.width, this.size.height, this.size.dpr);
   }
 
   heightOf(car) {
@@ -1136,16 +1200,17 @@ class View3D {
     return d.matrix;
   }
 
-  updateCars(sim) {
+  updateCars(sim, state) {
     const colors = this.colors;
     const leader = sim.leader;
+    const subject = state.subject;
+    // Todos salen del mismo punto: aunque son translúcidos, amontonados sobre el coche
+    // al que sigue la cámara lo taparían. Los que están pegados a él no se dibujan, y
+    // los cercanos se ven más pequeños cuanto más cerca, para que no aparezcan de golpe.
     let g = 0;
-    // Todos salen del mismo punto: aunque son translúcidos, amontonados sobre el líder
-    // lo taparían. Los que están pegados a él no se dibujan, y los cercanos se ven
-    // más pequeños cuanto más cerca, para que no aparezcan de golpe.
     for (const car of sim.cars) {
       if (car === leader || g >= V3.MAX_GHOSTS) continue;
-      const gap = Math.hypot(car.x - leader.x, car.y - leader.y);
+      const gap = Math.hypot(car.x - subject.x, car.y - subject.y);
       if (gap <= V3.GHOST_NEAR) continue;
       const t = Math.min(1, (gap - V3.GHOST_NEAR) / (V3.GHOST_FAR - V3.GHOST_NEAR));
       this.ghosts.setMatrixAt(g, this.place(car, 0, t * t * (3 - 2 * t)));
@@ -1156,21 +1221,50 @@ class View3D {
     this.ghosts.instanceMatrix.needsUpdate = true;
     if (this.ghosts.instanceColor) this.ghosts.instanceColor.needsUpdate = true;
 
-    const detailed = [{ car: leader, color: leader.damaged ? colors.wreck : colors.leader }];
+    const detailed = [{ car: leader, color: leader.damaged ? colors.wreck : colors.leader, style: "sedan" }];
+    if (sim.player) detailed.push({ car: sim.player, color: sim.player.damaged ? colors.wreck : colors.player, style: "sedan" });
     if (sim.traffic) {
-      for (const car of sim.traffic.cars) {
-        if (detailed.length < V3.MAX_DETAILED) detailed.push({ car, color: colors.traffic[car.color] });
-      }
+      sim.traffic.cars.forEach((car, i) => {
+        if (detailed.length >= V3.MAX_DETAILED) return;
+        detailed.push({ car, color: colors.traffic[car.color], style: V3.TRAFFIC_STYLES[i % V3.TRAFFIC_STYLES.length], traffic: true });
+      });
     }
+
+    const counts = { sedan: 0, hatch: 0, suv: 0, van: 0 };
+    let wheels = 0;
     let beams = 0;
-    detailed.forEach(({ car, color }, i) => {
-      const matrix = this.place(car);
-      this.carPaint.setMatrixAt(i, matrix);
-      this.carTrim.setMatrixAt(i, matrix);
-      this.carLamps.setMatrixAt(i, matrix);
-      this.carPaint.setColorAt(i, this.tmpColor.set(color));
-      if (this.night && i > 0) {
-        // Los faros del tráfico: un cono de luz pintado sobre el asfalto.
+    for (const { car, color, style, traffic } of detailed) {
+      const set = this.carSets[style];
+      const i = counts[style]++;
+      const matrix = this.carMatrix.copy(this.place(car));
+      set.paint.setMatrixAt(i, matrix);
+      set.trim.setMatrixAt(i, matrix);
+      set.head.setMatrixAt(i, matrix);
+      set.tail.setMatrixAt(i, matrix);
+      set.paint.setColorAt(i, this.tmpColor.set(color));
+      // Pilotos: se encienden al frenar (o al ir marcha atrás).
+      const braking = traffic ? car.speed < 0.4 : !car.damaged && (car.controls.reverse || (!car.controls.forward && Math.abs(car.speed) > 0.2));
+      set.tail.setColorAt(i, braking ? this.tmpColor.setRGB(1, 0.2, 0.12) : this.tmpColor.setRGB(0.42, 0.03, 0.03));
+
+      // Ruedas: giran con lo que avanza el coche, y las de delante tuercen con el volante.
+      let m = this.motion.get(car);
+      if (!m) this.motion.set(car, (m = { spin: 0, steer: 0 }));
+      const radius = this.kit[style].wheel;
+      m.spin -= (car.speed * state.steps) / radius;
+      m.steer += ((traffic || car.damaged ? 0 : car.controls.steer) - m.steer) * 0.2;
+      const w = this.wheelDummy;
+      for (const x of [1, -1]) {
+        for (const z of [1, -1]) {
+          w.position.set(x * this.kit.axle, radius, z * this.kit.track);
+          w.rotation.set(0, x > 0 ? -m.steer * 0.42 : 0, m.spin);
+          w.scale.set(radius, radius, 4.5);
+          w.updateMatrix();
+          this.wheels.setMatrixAt(wheels++, this.tmpMatrix.multiplyMatrices(matrix, w.matrix));
+        }
+      }
+
+      if (this.night && car !== subject && !car.damaged) {
+        // Faros de los demás coches: un cono de luz pintado sobre el asfalto.
         const d = this.dummy;
         const reach = 150;
         d.position.set(car.x + Math.cos(car.angle) * (CAR_LENGTH / 2 + reach / 2), this.heightOf(car) + V3.Y_TRAIL + 0.5, car.y + Math.sin(car.angle) * (CAR_LENGTH / 2 + reach / 2));
@@ -1179,21 +1273,27 @@ class View3D {
         d.updateMatrix();
         this.beams.setMatrixAt(beams++, d.matrix);
       }
-    });
-    for (const mesh of [this.carPaint, this.carTrim, this.carLamps]) {
-      mesh.count = detailed.length;
-      mesh.instanceMatrix.needsUpdate = true;
     }
-    if (this.carPaint.instanceColor) this.carPaint.instanceColor.needsUpdate = true;
+    for (const style of CAR_STYLES) {
+      const set = this.carSets[style];
+      for (const mesh of [set.paint, set.trim, set.head, set.tail]) {
+        mesh.count = counts[style];
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
+    }
+    this.wheels.count = wheels;
+    this.wheels.instanceMatrix.needsUpdate = true;
     this.beams.count = beams;
     this.beams.instanceMatrix.needsUpdate = true;
 
+    // Los faros del coche al que sigue la cámara son una luz de verdad.
     if (this.night) {
-      const dx = Math.cos(leader.angle), dz = Math.sin(leader.angle);
-      const h = this.heightOf(leader);
-      this.headlamp.position.set(leader.x + dx * 20, h + 9, leader.y + dz * 20);
-      this.headlamp.target.position.set(leader.x + dx * 240, h, leader.y + dz * 240);
-      this.headlamp.intensity = leader.damaged ? 0 : 9;
+      const dx = Math.cos(subject.angle), dz = Math.sin(subject.angle);
+      const h = this.heightOf(subject);
+      this.headlamp.position.set(subject.x + dx * 20, h + 9, subject.y + dz * 20);
+      this.headlamp.target.position.set(subject.x + dx * 240, h, subject.y + dz * 240);
+      this.headlamp.intensity = subject.damaged ? 0 : this.headlampPower;
     }
   }
 
@@ -1341,8 +1441,9 @@ class View3D {
     const az = leader.y - z;
     const len2 = ax * ax + az * az || 1;
     const len = Math.sqrt(len2);
-    for (const b of this.world.scenery.buildings) {
-      if (b.top3d === undefined) continue;
+    for (const lot of this.world.scenery.buildings) {
+      if (lot.top3d === undefined) continue;
+      const b = lot.mass || lot; // la planta de lo que de verdad se levantó ahí
       const t = clamp(((b.c.x - x) * ax + (b.c.y - z) * az) / len2, 0, 1);
       if (Math.hypot(b.c.x - (x + ax * t), b.c.y - (z + az * t)) > b.radius + 6) continue;
       // Cerca de la casa: se prueban varios puntos de la línea de visión contra su
@@ -1353,66 +1454,115 @@ class View3D {
         const pz = z + az * tk - b.c.y;
         const along = px * b.u.x + pz * b.u.y;
         const across = -px * b.u.y + pz * b.u.x;
-        if (Math.abs(along) < b.w / 2 + 6 && Math.abs(across) < b.d / 2 + 6 && y + (leaderY - y) * tk < b.top3d + 12) return true;
+        if (Math.abs(along) < b.w / 2 + 6 && Math.abs(across) < b.d / 2 + 6 && y + (leaderY - y) * tk < lot.top3d + 12) return true;
       }
     }
     return false;
   }
 
-  // Siguiendo al líder, la cámara va detrás y por encima de su coche y gira con él
-  // sin sacudidas. Sin seguirlo, mira el mapa desde lo alto, centrada en view.x, view.y.
-  updateCamera({ sim, view, follow, speed, driveZoom }) {
-    const leader = sim.leader;
+  // Cámaras. Siguiendo a un coche: "chase" (detrás y por encima, girando con él sin
+  // sacudidas), "cockpit" (desde el asiento), "drone" (dando vueltas a su alrededor) y
+  // "director", que va cambiando sola de plano. Sin seguirlo, mira el mapa desde lo
+  // alto, centrada en view.x, view.y.
+  updateCamera({ subject: car, view, follow, speed, driveZoom, camera }) {
     const ease = (k) => (this.camReady ? 1 - Math.pow(1 - k, Math.max(1, speed)) : 1);
-    let pos;
-    let target;
+    let shot = "map";
     if (follow) {
-      const scale = clamp(driveZoom / view.zoom, 0.35, 6);
-      // Si el líder salta de sitio (empieza otra generación, o pasa a serlo un coche
+      shot = camera || "chase";
+      if (shot === "director") shot = V3.SHOTS[Math.floor(this.frame / V3.SHOT_FRAMES) % V3.SHOTS.length];
+      // Si el coche salta de sitio (empieza otra generación, o pasa a ser el líder uno
       // que está lejos), la cámara corta a su nueva posición en vez de volar hasta allí
       // atravesando casas.
-      const last = this.lastLeader;
-      if (last && Math.hypot(leader.x - last.x, leader.y - last.y) > 250) this.camReady = false;
-      this.lastLeader = { x: leader.x, y: leader.y };
-      if (Math.abs(leader.speed) > 0.3 || !this.camReady) {
-        let turn = leader.angle - this.camHeading;
+      const last = this.lastSubject;
+      if (last && Math.hypot(car.x - last.x, car.y - last.y) > 250) this.camReady = false;
+      this.lastSubject = { x: car.x, y: car.y };
+    }
+    if (shot !== this.shot) {
+      // Entre el mapa y la cámara de detrás se vuela; cualquier otro cambio es un corte.
+      const glide = (shot === "map" && this.shot === "chase") || (shot === "chase" && this.shot === "map");
+      if (!glide) this.camReady = false;
+      this.shot = shot;
+    }
+
+    let pos;
+    let target;
+    let fov = 45;
+    let kPos = 0.09;
+    let kTarget = 0.14;
+    if (follow) {
+      const scale = clamp(driveZoom / view.zoom, 0.35, 6);
+      if (Math.abs(car.speed) > 0.3 || !this.camReady) {
+        let turn = car.angle - this.camHeading;
         turn = Math.atan2(Math.sin(turn), Math.cos(turn));
         this.camHeading += turn * ease(0.05);
       }
       const dx = Math.cos(this.camHeading), dz = Math.sin(this.camHeading);
-      const h = this.heightOf(leader);
-      const back = 175 * scale;
-      const up = 16 + 82 * scale;
-      // Si desde su sitio de siempre una casa taparía al líder (en las curvas la cámara
-      // va con retraso y queda sobre la esquina), sube y se acerca para verlo por encima.
-      const hidden = this.blocked(leader.x - dx * back, leader.y - dz * back, h + up, leader, h + 8);
-      this.camLift = this.camReady ? lerp(this.camLift || 0, hidden ? 1 : 0, ease(hidden ? 0.1 : 0.03)) : hidden ? 1 : 0;
-      const reach = back * (1 - 0.4 * this.camLift);
-      pos = new THREE.Vector3(leader.x - dx * reach, h + up + this.camLift * 150 * scale, leader.y - dz * reach);
-      target = new THREE.Vector3(leader.x + dx * 55 * (1 - this.camLift), h + 8, leader.y + dz * 55 * (1 - this.camLift));
-      this.camPos.lerp(pos, ease(0.09));
-      this.camTarget.lerp(target, ease(0.14));
+      const h = this.heightOf(car);
+      if (shot === "cockpit") {
+        // Va fija al coche, justo por delante del parabrisas: se ve el capó y la calle.
+        const fx = Math.cos(car.angle), fz = Math.sin(car.angle);
+        pos = new THREE.Vector3(car.x + fx * 8, h + 14.8, car.y + fz * 8);
+        target = new THREE.Vector3(car.x + fx * 150, h + 8, car.y + fz * 150);
+        fov = 64;
+        kPos = kTarget = 1;
+      } else if (shot === "drone") {
+        this.orbit = (this.orbit || 0) + 0.004;
+        pos = new THREE.Vector3(car.x + Math.cos(this.orbit) * 360 * scale, h + 250 * scale, car.y + Math.sin(this.orbit) * 360 * scale);
+        target = new THREE.Vector3(car.x, h + 8, car.y);
+      } else if (shot === "side") {
+        pos = new THREE.Vector3(car.x - dz * 135 * scale - dx * 35, h + 40 * scale, car.y + dx * 135 * scale - dz * 35);
+        target = new THREE.Vector3(car.x + dx * 25, h + 8, car.y + dz * 25);
+      } else if (shot === "front") {
+        pos = new THREE.Vector3(car.x + dx * 200 * scale, h + 62 * scale, car.y + dz * 200 * scale);
+        target = new THREE.Vector3(car.x - dx * 10, h + 8, car.y - dz * 10);
+      } else if (shot === "high") {
+        pos = new THREE.Vector3(car.x, h + 640 * scale, car.y + 270 * scale);
+        target = new THREE.Vector3(car.x, h, car.y);
+      } else {
+        const back = 175 * scale;
+        const up = 16 + 82 * scale;
+        // Si desde su sitio de siempre una casa taparía al coche (en las curvas la cámara
+        // va con retraso y queda sobre la esquina), sube y se acerca para verlo por encima.
+        const hidden = this.blocked(car.x - dx * back, car.y - dz * back, h + up, car, h + 8);
+        this.camLift = this.camReady ? lerp(this.camLift || 0, hidden ? 1 : 0, ease(hidden ? 0.1 : 0.03)) : hidden ? 1 : 0;
+        let reach = back * (1 - 0.4 * this.camLift);
+        const height = h + up + this.camLift * 150 * scale;
+        if (hidden && this.camLift > 0.6) {
+          // Entre torres ni subiendo se le ve: la cámara se acerca hasta que nada lo tape.
+          for (const k of [0.42, 0.28, 0.16]) {
+            if (!this.blocked(car.x - dx * reach, car.y - dz * reach, height, car, h + 8)) break;
+            reach = back * k;
+          }
+        }
+        pos = new THREE.Vector3(car.x - dx * reach, height, car.y - dz * reach);
+        target = new THREE.Vector3(car.x + dx * 55 * (1 - this.camLift), h + 8, car.y + dz * 55 * (1 - this.camLift));
+      }
     } else {
-      const d = (1.0 * this.viewHeight) / view.zoom / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
+      const d = this.viewHeight / view.zoom / (2 * Math.tan((45 * Math.PI) / 360));
       const pitch = 0.95; // ≈ 54° sobre el horizonte
       // En perspectiva la mitad cercana del mapa ocupa más pantalla que la lejana:
       // se mira un poco más acá del centro para que el mapa quede centrado.
       const near = d * 0.09;
       target = new THREE.Vector3(view.x, 0, view.y + near);
       pos = new THREE.Vector3(view.x, d * Math.sin(pitch), view.y + near + d * Math.cos(pitch));
-      this.camPos.lerp(pos, ease(0.25));
-      this.camTarget.lerp(target, ease(0.25));
+      kPos = kTarget = 0.25;
       this.camHeading = -Math.PI / 2;
     }
+    this.camPos.lerp(pos, ease(kPos));
+    this.camTarget.lerp(target, ease(kTarget));
     this.camReady = true;
+    if (this.camera.fov !== fov) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camTarget);
     this.sky.position.copy(this.camPos);
 
     // La niebla y las sombras se ajustan a lo lejos que está la cámara.
     const dist = this.camPos.distanceTo(this.camTarget);
-    this.scene.fog.near = 1400 + dist * 1.6;
-    this.scene.fog.far = 9000 + dist * 4;
+    this.scene.fog.near = (1400 + dist * 1.6) * this.fogScale;
+    this.scene.fog.far = (9000 + dist * 4) * this.fogScale;
     const size = clamp(dist * 1.5, 520, 5200);
     if (Math.abs(size - this.shadowSize) > this.shadowSize * 0.08) {
       this.shadowSize = size;
@@ -1425,20 +1575,25 @@ class View3D {
     }
     // El resplandor solo acompaña de cerca: desde lo alto se vería como un foco en el césped.
     this.glow.position.set(this.camTarget.x, 130, this.camTarget.z);
-    this.glow.intensity = this.night ? 1.1 * clamp(1 - (dist - 500) / 900, 0, 1) : 0;
+    this.glow.intensity = this.glowPower * clamp(1 - (dist - 500) / 900, 0, 1);
     this.sun.target.position.set(this.camTarget.x, 0, this.camTarget.z);
     this.sun.position.copy(this.sun.target.position).addScaledVector(this.sunOffset, 4000);
   }
 
   render(state) {
     this.frame++;
+    this.tuneQuality();
     const { sim } = state;
-    this.updateCars(sim);
-    this.updateWalkers(sim);
+    state.subject = state.subject || sim.leader; // el coche al que sigue la cámara
+    state.steps = state.steps || 0; // pasos de simulación desde el fotograma anterior
+    this.updateCars(sim, state);
+    this.updateWalkers(sim, state);
     this.updateSignals(sim);
     this.updateSensors(sim.leader);
     this.updateTrails(state.trails, sim);
     this.updateCamera(state);
+    this.updateRain();
+    if (this.updateFx) this.updateFx(sim, state);
     this.renderer.render(this.scene, this.camera);
   }
 }
