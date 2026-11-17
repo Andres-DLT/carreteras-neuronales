@@ -22,6 +22,8 @@ const V3 = {
   BRIDGE_RAMP: 150,
   LAMP_GAP: 190, // separación entre farolas
   MAX_GHOSTS: 300,
+  GHOST_NEAR: 48, // a menos de esto del líder, el resto de la población no se dibuja
+  GHOST_FAR: 110, // y de ahí a aquí va creciendo hasta su tamaño
   MAX_DETAILED: 40,
   MAX_WALKERS: 400,
   WALLS: ["#f2efe6", "#ece2cf", "#e9d9c3", "#f4e6c8", "#dfe5e8", "#e8cdbb", "#d9d2c5", "#f0f0ee"],
@@ -863,6 +865,7 @@ class View3D {
       const flat = hash % 5 === 0;
       const floors = flat ? 2 + (hash % 7 === 0 ? 1 : 0) : b.height > 0.72 ? 2 : 1;
       const H = floors * V3.FLOOR + 3;
+      b.top3d = flat ? H + 4 : H + Math.min(b.w, b.d) * 0.3; // hasta dónde llega, con tejado
       const u = b.u;
       const n = { x: -u.y, y: u.x };
       const tone = wallTones[(hash >>> 3) % wallTones.length];
@@ -1124,11 +1127,11 @@ class View3D {
     return bridgeHeight((car.x - a.x) * b.u.x + (car.y - a.y) * b.u.y, b.len) + 1.7;
   }
 
-  place(car, extra = 0) {
+  place(car, extra = 0, scale = 1) {
     const d = this.dummy;
     d.position.set(car.x, this.heightOf(car) + extra, car.y);
     d.rotation.set(0, -car.angle, 0);
-    d.scale.set(1, 1, 1);
+    d.scale.set(scale, scale, scale);
     d.updateMatrix();
     return d.matrix;
   }
@@ -1137,9 +1140,15 @@ class View3D {
     const colors = this.colors;
     const leader = sim.leader;
     let g = 0;
+    // Todos salen del mismo punto: aunque son translúcidos, amontonados sobre el líder
+    // lo taparían. Los que están pegados a él no se dibujan, y los cercanos se ven
+    // más pequeños cuanto más cerca, para que no aparezcan de golpe.
     for (const car of sim.cars) {
       if (car === leader || g >= V3.MAX_GHOSTS) continue;
-      this.ghosts.setMatrixAt(g, this.place(car));
+      const gap = Math.hypot(car.x - leader.x, car.y - leader.y);
+      if (gap <= V3.GHOST_NEAR) continue;
+      const t = Math.min(1, (gap - V3.GHOST_NEAR) / (V3.GHOST_FAR - V3.GHOST_NEAR));
+      this.ghosts.setMatrixAt(g, this.place(car, 0, t * t * (3 - 2 * t)));
       this.ghosts.setColorAt(g, this.tmpColor.set(car.damaged ? colors.wreck : colors.car));
       g++;
     }
@@ -1326,6 +1335,30 @@ class View3D {
     trails.dirtyAll = false;
   }
 
+  // ¿Hay alguna casa entre la cámara (en x, z, a la altura y) y el líder?
+  blocked(x, z, y, leader, leaderY) {
+    const ax = leader.x - x;
+    const az = leader.y - z;
+    const len2 = ax * ax + az * az || 1;
+    const len = Math.sqrt(len2);
+    for (const b of this.world.scenery.buildings) {
+      if (b.top3d === undefined) continue;
+      const t = clamp(((b.c.x - x) * ax + (b.c.y - z) * az) / len2, 0, 1);
+      if (Math.hypot(b.c.x - (x + ax * t), b.c.y - (z + az * t)) > b.radius + 6) continue;
+      // Cerca de la casa: se prueban varios puntos de la línea de visión contra su
+      // planta (un rectángulo girado) y su altura.
+      for (let k = -2; k <= 2; k++) {
+        const tk = clamp(t + (k * b.radius * 0.45) / len, 0, 1);
+        const px = x + ax * tk - b.c.x;
+        const pz = z + az * tk - b.c.y;
+        const along = px * b.u.x + pz * b.u.y;
+        const across = -px * b.u.y + pz * b.u.x;
+        if (Math.abs(along) < b.w / 2 + 6 && Math.abs(across) < b.d / 2 + 6 && y + (leaderY - y) * tk < b.top3d + 12) return true;
+      }
+    }
+    return false;
+  }
+
   // Siguiendo al líder, la cámara va detrás y por encima de su coche y gira con él
   // sin sacudidas. Sin seguirlo, mira el mapa desde lo alto, centrada en view.x, view.y.
   updateCamera({ sim, view, follow, speed, driveZoom }) {
@@ -1335,6 +1368,12 @@ class View3D {
     let target;
     if (follow) {
       const scale = clamp(driveZoom / view.zoom, 0.35, 6);
+      // Si el líder salta de sitio (empieza otra generación, o pasa a serlo un coche
+      // que está lejos), la cámara corta a su nueva posición en vez de volar hasta allí
+      // atravesando casas.
+      const last = this.lastLeader;
+      if (last && Math.hypot(leader.x - last.x, leader.y - last.y) > 250) this.camReady = false;
+      this.lastLeader = { x: leader.x, y: leader.y };
       if (Math.abs(leader.speed) > 0.3 || !this.camReady) {
         let turn = leader.angle - this.camHeading;
         turn = Math.atan2(Math.sin(turn), Math.cos(turn));
@@ -1342,8 +1381,15 @@ class View3D {
       }
       const dx = Math.cos(this.camHeading), dz = Math.sin(this.camHeading);
       const h = this.heightOf(leader);
-      pos = new THREE.Vector3(leader.x - dx * 175 * scale, h + 16 + 82 * scale, leader.y - dz * 175 * scale);
-      target = new THREE.Vector3(leader.x + dx * 55, h + 8, leader.y + dz * 55);
+      const back = 175 * scale;
+      const up = 16 + 82 * scale;
+      // Si desde su sitio de siempre una casa taparía al líder (en las curvas la cámara
+      // va con retraso y queda sobre la esquina), sube y se acerca para verlo por encima.
+      const hidden = this.blocked(leader.x - dx * back, leader.y - dz * back, h + up, leader, h + 8);
+      this.camLift = this.camReady ? lerp(this.camLift || 0, hidden ? 1 : 0, ease(hidden ? 0.1 : 0.03)) : hidden ? 1 : 0;
+      const reach = back * (1 - 0.4 * this.camLift);
+      pos = new THREE.Vector3(leader.x - dx * reach, h + up + this.camLift * 150 * scale, leader.y - dz * reach);
+      target = new THREE.Vector3(leader.x + dx * 55 * (1 - this.camLift), h + 8, leader.y + dz * 55 * (1 - this.camLift));
       this.camPos.lerp(pos, ease(0.09));
       this.camTarget.lerp(target, ease(0.14));
     } else {
