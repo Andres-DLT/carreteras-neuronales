@@ -19,6 +19,7 @@
   const SEGMENT_HIT = 12; // px de pantalla para tocar un tramo y partirlo
   const DRIVE_ZOOM = 0.85;
   const narrow = matchMedia("(max-width: 720px)").matches;
+  const coarse = matchMedia("(pointer: coarse)").matches; // pantalla táctil
 
   const HINTS = {
     add:
@@ -93,6 +94,7 @@
       trail: get("--trail"),
       spark: get("--spark"),
       night: get("--night") === "1", // la vista 3D es de noche con el tema oscuro
+      player: get("--player"), // el coche que conduces tú
     };
   }
   const themeChanged = () => {
@@ -122,7 +124,12 @@
     showBrain: !narrow,
     showCauses: !narrow,
     view3d: false,
+    driving: false, // conduces tú un coche
     trails: true, // estelas de luz de los coches
+    camera: "chase", // cámara de la vista 3D al seguir un coche: chase, cockpit, drone o director
+    sound: false,
+    hour: "auto", // hora del día en la vista 3D: auto (según el tema), day, sunset o night
+    weather: "clear", // clima en la vista 3D: clear, rain o fog
     needsBuild: false,
     mapChanged: false,
     trainedKey: null, // mapa al que pertenece el entrenamiento actual
@@ -158,6 +165,17 @@
     ui.view3d = !!data.view3d;
     if (ui.view3d) loadView3D();
     ui.trails = data.trails ?? true;
+    ui.hour = data.hour || "auto";
+    ui.camera = CAMERAS[data.camera] ? data.camera : "chase";
+    // El sonido guardado como activo empieza con el primer toque o tecla: el navegador
+    // no deja sonar antes.
+    ui.sound = !!data.sound && Sound.supported;
+    if (ui.sound) {
+      const wake = () => sound.enable(ui.sound);
+      window.addEventListener("pointerdown", wake, { once: true });
+      window.addEventListener("keydown", wake, { once: true });
+    }
+    ui.weather = data.weather || "clear";
     if (typeof data.showBrain === "boolean") ui.showBrain = data.showBrain;
     if (typeof data.showCauses === "boolean") ui.showCauses = data.showCauses;
 
@@ -189,6 +207,10 @@
       showCauses: ui.showCauses,
       view3d: ui.view3d,
       trails: ui.trails,
+      hour: ui.hour,
+      weather: ui.weather,
+      camera: ui.camera,
+      sound: ui.sound,
       tour: ui.tour,
       realMap: ui.realMap || null,
     };
@@ -207,9 +229,10 @@
       { name: "Ciudad al azar", data: randomCityData(TOUR_SEED) },
     ];
     for (const key of TOUR_REAL) {
-      if (MAP_TEMPLATES[key]) list.push({ name: MAP_TEMPLATES[key].name, data: MAP_TEMPLATES[key].build(), real: true });
+      if (MAP_TEMPLATES[key]) list.push({ name: MAP_TEMPLATES[key].name, data: MAP_TEMPLATES[key].build(), real: true, key });
     }
     list[0].real = !!ui.realMap;
+    list[0].key = ui.realMap || null; // el barrio real, si lo es: la vista 3D lo viste a su estilo
     return list;
   }
 
@@ -324,6 +347,7 @@
   // ---------- Modos ----------
   function setMode(mode) {
     if (mode !== "train") stopTurbo();
+    if (mode !== "train" && ui.driving) setDriving(false);
     if (mode === "train") {
       if (ui.needsBuild) buildWorld();
       if (!world.graph.segments.length) {
@@ -377,7 +401,39 @@
 
   // ---------- Bucle principal ----------
   let tick = 0;
+  let stepped = 0; // pasos de simulación dados en este fotograma
+  let slowmo = 0; // fotogramas que quedan a cámara lenta
+  let recordGen = 0; // generación en la que ya se avisó del récord
+
+  // Récord batido en plena carrera (entrenando en un solo mapa): suena un aviso y, con
+  // la cámara de director, se ve unos segundos a cámara lenta.
+  function watchRecord() {
+    if (sim.touring || sim.record <= 0 || recordGen === sim.generation) return;
+    if (sim.leader.cells.size <= sim.record) return;
+    recordGen = sim.generation;
+    sound.record();
+    if (live3d() && ui.follow && ui.camera === "director" && !ui.driving) slowmo = 150;
+  }
+
+  // Sonido del coche al que sigue la cámara.
+  const crashed = new WeakSet();
+  function updateSound() {
+    const car = subject();
+    const running = ui.mode === "train" && ui.playing && !turbo.on;
+    sound.update({
+      speed: Math.abs(car.speed) / car.maxSpeed,
+      throttle: car.controls.forward,
+      rain: running && live3d() && ui.weather === "rain",
+      active: running && !car.damaged,
+    });
+    if (car.damaged && !crashed.has(car)) {
+      crashed.add(car);
+      if (running && car.reason !== "atascado") sound.crash();
+    }
+  }
+
   function loop() {
+    stepped = 0;
     if (ui.needsBuild) buildWorld();
     if (ui.mode === "train") {
       if (turbo.on) {
@@ -388,19 +444,32 @@
           while (turbo.on && performance.now() - start < 12) sim.step();
         }
       } else if (ui.playing) {
-        for (let i = 0; i < ui.speed; i++) {
+        // A cámara lenta, un paso cada tres fotogramas.
+        stepped = slowmo > 0 ? (slowmo-- % 3 === 0 ? 1 : 0) : ui.speed;
+        for (let i = 0; i < stepped; i++) {
           sim.step();
           if (ui.trails) trails.track(sim, colors);
         }
+        watchRecord();
       }
       if (ui.follow) {
         const ease = 1 - Math.pow(0.88, ui.speed); // a más velocidad, la cámara alcanza antes al líder
-        view.x = lerp(view.x, sim.leader.x, ease);
-        view.y = lerp(view.y, sim.leader.y, ease);
+        const focus = subject();
+        view.x = lerp(view.x, focus.x, ease);
+        view.y = lerp(view.y, focus.y, ease);
+      }
+      const me = sim.player;
+      if (me && me.damaged && !me.told) {
+        me.told = true;
+        toast(CRASH_TEXT[me.reason] || "Has chocado: vuelves a la salida.");
       }
     }
+    if (ui.sound) updateSound();
     const in3d = live3d();
-    if (canvas3d.hidden === in3d) canvas3d.hidden = !in3d;
+    if (canvas3d.hidden === in3d) {
+      canvas3d.hidden = !in3d;
+      $(".scale").style.visibility = in3d ? "hidden" : ""; // la escala solo vale para el plano
+    }
     if (in3d) draw3D();
     else draw();
     if (tick++ % 6 === 0) updateHud();
@@ -496,6 +565,9 @@
   // Mientras llega (o si el navegador no tiene WebGL) se ve la vista aérea de siempre.
   let view3d = null;
   let view3dState = "idle"; // idle → loading → ready | failed
+  const sound = new Sound();
+  // Cámaras de la vista 3D, en el orden en que las recorre el botón.
+  const CAMERAS = { chase: "detrás", cockpit: "conductor", drone: "dron", director: "director" };
 
   function loadView3D() {
     if (view3dState !== "idle") return;
@@ -527,18 +599,25 @@
     toast("La vista 3D realista no está disponible: se usa la vista aérea.");
   }
 
+  // El coche al que sigue la cámara: el que conduces tú o, si no, el líder.
+  const subject = () => (ui.driving && sim.player ? sim.player : sim.leader);
+
   // El 3D realista solo se usa entrenando; el editor trabaja siempre sobre el plano.
   const live3d = () => ui.view3d && ui.mode === "train" && view3dState === "ready";
 
   function draw3D() {
     try {
-      if (view3d.colors !== colors) view3d.setTheme(colors);
-      view3d.setWorld(sim.world, { pedestrians: sim.pedestrians, lights: sim.lights });
+      view3d.setTheme(colors, ui.hour, ui.weather);
+      const style = sim.touring && ui.tourMaps ? ui.tourMaps[sim.heat].key : ui.realMap;
+      view3d.setWorld(sim.world, { pedestrians: sim.pedestrians, lights: sim.lights, style: style || null });
       view3d.render({
         sim,
         view,
+        subject: subject(),
         follow: ui.follow,
         speed: ui.playing && !turbo.on ? ui.speed : 1,
+        steps: stepped,
+        camera: ui.camera,
         driveZoom: DRIVE_ZOOM,
         trails: ui.trails ? trails : null,
       });
@@ -783,6 +862,8 @@
       drawSensors(leader);
       paintCar(leader, leader.damaged ? colors.wreck : colors.leader, true);
     }
+    const me = sim.player;
+    if (me && here(me)) paintCar(me, me.damaged ? colors.wreck : colors.player, true, me.controls.reverse);
   }
 
   function roundedRect(c, x, y, w, h, r) {
@@ -975,6 +1056,7 @@
     best: $("#s-best"),
     record: $("#s-record"),
     kmh: $("#s-kmh"),
+    you: $("#s-you"),
     scaleLabel: $("#scale-label"),
     scaleBar: $("#scale-bar"),
   };
@@ -994,7 +1076,8 @@
     const heat = $("#s-heat");
     heat.hidden = !sim.touring;
     if (sim.touring && ui.tourMaps) setText(heat, `Mapa ${sim.heat + 1} de ${sim.worlds.length} · ${ui.tourMaps[sim.heat].name}`);
-    setText(els.kmh, `${Math.round(leader.kmh)} km/h`);
+    setText(els.kmh, `${Math.round(subject().kmh)} km/h`);
+    if (sim.player) setText(els.you, meters(sim.player.cells.size));
     if (turbo.on) {
       const seconds = (performance.now() - turbo.started) / 1000;
       const rate = seconds > 0.5 ? (turbo.gens / seconds).toFixed(1).replace(".", ",") : "–";
@@ -1429,7 +1512,11 @@
     $("#turbo").setAttribute("aria-pressed", String(turbo.on));
     $("#turbo").textContent = turbo.on ? "Detener turbo" : "Turbo";
     for (const id of ["#play", "#next"]) $(id).disabled = turbo.on;
-    $$("[data-speed]").forEach((b) => (b.disabled = turbo.on));
+    $$("[data-speed]").forEach((b) => (b.disabled = turbo.on || ui.driving));
+    $("#turbo").disabled = ui.driving;
+    $("#drive").setAttribute("aria-pressed", String(ui.driving));
+    $("#pad").hidden = !(ui.driving && coarse);
+    $("#stat-you").hidden = !ui.driving;
     $("#turbo-status").hidden = !turbo.on;
     $$("[data-speed]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === ui.speed)));
     $$("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === ui.tool)));
@@ -1439,8 +1526,14 @@
     $("#toggle-causes").setAttribute("aria-pressed", String(ui.showCauses));
     $("#causes-card").hidden = !ui.showCauses;
     $("#view3d").setAttribute("aria-pressed", String(ui.view3d));
+    $("#camera").hidden = !ui.view3d || ui.mode !== "train";
+    $("#camera").textContent = `Cámara: ${CAMERAS[ui.camera]}`;
+    $("#sound").setAttribute("aria-pressed", String(ui.sound));
+    $("#sound").hidden = !Sound.supported;
     $("#pedestrians").checked = sim.pedestrians;
     $("#trails").checked = ui.trails;
+    $("#hour").value = ui.hour;
+    $("#weather").value = ui.weather;
     $("#tour").checked = ui.tour;
     $("#finish").disabled = !ui.selected;
     $("#hint").innerHTML = HINTS[ui.tool];
@@ -1452,6 +1545,91 @@
     $("#traffic-out").textContent = trafficLabel(sim.trafficCount);
     $("#lights").checked = sim.lights;
   }
+
+  // ---------- Conducir tú ----------
+  // Un coche más, fuera de la población: lo llevas con las flechas, con WASD o con los
+  // botones de la pantalla, por el mismo mapa y con las mismas reglas que los demás.
+  const pedals = { forward: false, reverse: false, steer: 0 };
+  const held = new Set();
+  const KEYS = {
+    ArrowUp: "up", w: "up", W: "up",
+    ArrowDown: "down", s: "down", S: "down",
+    ArrowLeft: "left", a: "left", A: "left",
+    ArrowRight: "right", d: "right", D: "right",
+  };
+  const CRASH_TEXT = {
+    choque: "Has chocado: vuelves a la salida.",
+    semáforo: "Te has pasado un semáforo en rojo: vuelves a la salida.",
+    atropello: "Has atropellado a un peatón: vuelves a la salida.",
+  };
+
+  function readPedals() {
+    pedals.forward = held.has("up");
+    pedals.reverse = held.has("down");
+    pedals.steer = (held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0);
+  }
+
+  function setDriving(on) {
+    if (on && ui.mode !== "train") return;
+    ui.driving = on;
+    held.clear();
+    readPedals();
+    if (on) {
+      stopTurbo();
+      ui.speed = 1; // a tiempo real, o no habría quien lo condujera
+      ui.playing = true;
+      sim.drive(pedals);
+      if (!ui.follow) setFollow(true);
+      toast(
+        coarse
+          ? "Conduce con los botones de la pantalla. Chocar o pasarte un rojo te devuelve a la salida."
+          : "Conduce con las flechas o con WASD. Chocar o pasarte un rojo te devuelve a la salida."
+      );
+    } else sim.stopDriving();
+    syncControls();
+  }
+
+  window.addEventListener("keydown", (e) => {
+    const key = KEYS[e.key];
+    if (!key || !ui.driving || (e.target.closest && e.target.closest("input, select, textarea"))) return;
+    e.preventDefault();
+    held.add(key);
+    readPedals();
+  });
+  window.addEventListener("keyup", (e) => {
+    const key = KEYS[e.key];
+    if (!key) return;
+    held.delete(key);
+    readPedals();
+  });
+  window.addEventListener("blur", () => {
+    held.clear();
+    readPedals();
+  });
+  $$("[data-pedal]").forEach((button) => {
+    const press = (on) => (e) => {
+      e.preventDefault();
+      if (on) held.add(button.dataset.pedal);
+      else held.delete(button.dataset.pedal);
+      readPedals();
+    };
+    button.addEventListener("pointerdown", press(true));
+    for (const type of ["pointerup", "pointercancel", "pointerleave"]) button.addEventListener(type, press(false));
+  });
+  $("#drive").addEventListener("click", () => setDriving(!ui.driving));
+  $("#camera").addEventListener("click", () => {
+    const order = Object.keys(CAMERAS);
+    ui.camera = order[(order.indexOf(ui.camera) + 1) % order.length];
+    if (!ui.follow) setFollow(true); // las cámaras son para seguir a un coche
+    syncControls();
+    persistSoon();
+  });
+  $("#sound").addEventListener("click", () => {
+    ui.sound = !ui.sound;
+    sound.enable(ui.sound);
+    syncControls();
+    persistSoon();
+  });
 
   const trafficLabel = (n) => (n === 0 ? "sin tráfico" : n === 1 ? "1 coche" : `${n} coches`);
 
@@ -1564,6 +1742,14 @@
   $("#trails").addEventListener("change", (e) => {
     ui.trails = e.target.checked;
     if (!ui.trails) trails.reset(); // libera los lienzos
+    persistSoon();
+  });
+  $("#hour").addEventListener("change", (e) => {
+    ui.hour = e.target.value;
+    persistSoon();
+  });
+  $("#weather").addEventListener("change", (e) => {
+    ui.weather = e.target.value;
     persistSoon();
   });
   $("#toggle-causes").addEventListener("click", () => {

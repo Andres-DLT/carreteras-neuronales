@@ -79,6 +79,7 @@ class Car {
     this.cells = new Set();
     this.idle = 0;
     this.level = null; // null = a ras de suelo; si no, el puente por el que va
+    this.manual = null; // mandos { forward, reverse, steer } si lo conduce una persona
     this.polygon = this.createPolygon();
     this.explore();
   }
@@ -127,6 +128,13 @@ class Car {
       if (r && (r.kind === "car" || r.kind === "person")) car = Math.max(car, 1 - r.offset);
     }
     inputs.push(light, car);
+    if (this.manual) {
+      // Lo conduce una persona: los mandos vienen del teclado o de la pantalla, y nadie
+      // lo retira por quedarse parado.
+      Object.assign(this.controls, this.manual);
+      this.explore(true);
+      return;
+    }
     const [forward, left, right, reverse] = NeuralNetwork.feedForward(inputs, this.brain);
     // Si se activan a la vez la neurona de izquierda y la de derecha, se anulan.
     const steer = right - left;

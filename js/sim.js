@@ -37,6 +37,10 @@ class Simulation {
     this.maxFrames = 60 * 60; // una manga dura como mucho un minuto simulado
     this.scratch = [];
     this.onGeneration = null;
+    // El coche que conduce una persona (o null): va por el mismo mapa y con las mismas
+    // reglas, pero no forma parte de la población ni cuenta para el entrenamiento.
+    this.player = null;
+    this.driver = null; // sus mandos
     this.adopt({ brain, record, history, causes, generation });
   }
 
@@ -111,6 +115,38 @@ class Simulation {
     this.startHeat();
   }
 
+  // Empieza (o deja) de conducir una persona. `controls` son sus mandos, que la
+  // interfaz va cambiando: { forward, reverse, steer }.
+  drive(controls) {
+    this.driver = controls;
+    this.spawnPlayer();
+  }
+
+  stopDriving() {
+    this.driver = null;
+    this.player = null;
+  }
+
+  // Sale un poco por detrás de la línea de salida, para no nacer dentro de los demás.
+  spawnPlayer() {
+    const start = this.world.start;
+    const { angle } = start;
+    const back = { x: start.x - Math.cos(angle) * 64, y: start.y - Math.sin(angle) * 64 };
+    const { x, y } = this.world.isOnRoad(back) ? back : start;
+    this.player = new Car(x, y, angle);
+    this.player.manual = this.driver;
+    this.player.home = this.world;
+  }
+
+  // Si choca, vuelve a la salida al cabo de segundo y medio.
+  stepPlayer() {
+    const p = this.player;
+    if (!p.damaged) {
+      p.update(this.world, this.scratch, this.traffic);
+      if (p.damaged) p.wait = 90;
+    } else if (--p.wait <= 0) this.spawnPlayer();
+  }
+
   // Una manga: los mismos cerebros salen en el mapa que toca.
   startHeat() {
     this.world = this.worlds[this.heat];
@@ -124,6 +160,8 @@ class Simulation {
     this.traffic = needsTraffic
       ? new Traffic(this.world, { count: this.trafficCount, lights: this.lights, pedestrians: this.pedestrians })
       : null;
+    // Quien conduce sigue donde iba aunque empiece otra generación, salvo que cambie el mapa.
+    if (this.driver && (!this.player || this.player.home !== this.world)) this.spawnPlayer();
   }
 
   // Manda el terreno explorado; en empate gana quien sigue en marcha
@@ -148,6 +186,7 @@ class Simulation {
     }
     this.leader = leader;
     this.alive = alive;
+    if (this.player) this.stepPlayer();
     this.frame++;
     if (alive === 0 || this.frame >= this.maxFrames) this.finishHeat();
   }

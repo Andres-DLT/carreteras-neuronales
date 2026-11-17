@@ -65,6 +65,25 @@ y abre http://localhost:8765.
   las farolas encendidas y los faros alumbrando la calle. La rueda o el pellizco acercan
   y alejan la cámara. En el editor, y en navegadores sin WebGL, el botón levanta los
   edificios en perspectiva aérea sobre el plano, como antes.
+- **Cámara** (en 3D): *detrás* del coche, *conductor* (desde el capó), *dron* (dando
+  vueltas a su alrededor) y *director*, que cambia sola de plano y pone unos segundos de
+  cámara lenta cuando se bate el récord.
+- **Hora del día y clima** (en *Ajustes*, para el 3D): día, atardecer con sombras
+  largas o noche, y despejado, lluvia (con el asfalto mojado reflejando el cielo y las
+  luces) o niebla.
+- **Barrios con su aspecto**: en 3D cada barrio real se viste a su estilo. Torres de
+  cristal y un rascacielos en Midtown, manzanas de piedra con patio en el Eixample,
+  tejados de zinc y el Arco del Triunfo en L'Étoile, fachadas de colores y la plaza con
+  su bandera en el Centro Histórico, y casas bajas con un parque en la Condesa. En las
+  aceras hay árboles, bancos, papeleras, buzones, paradas de autobús y gente paseando.
+- **Conducir**: llevas tú un coche con las flechas o WASD (en pantallas táctiles, con
+  los botones que aparecen) por el mismo mapa y con las mismas reglas: chocar, pasarte
+  un rojo o atropellar te devuelve a la salida. El marcador muestra lo que llevas
+  recorrido junto a lo del líder. No cuenta para el entrenamiento.
+- **Sonido**: motor, rodadura, lluvia, choques y un aviso al batir el récord. Todo está
+  sintetizado en el navegador; no hay archivos de audio.
+- **Choques** (en 3D): chispas y humo donde un coche queda eliminado, y marcas de
+  frenada que se quedan en el asfalto, así las curvas difíciles acaban gastadas.
 - **Estelas de luz** (en *Ajustes*): cada coche deja un trazo de luz, como en una foto
   de larga exposición. La calle brilla más por donde pasa más población (de azul a
   blanco), queda un destello donde un coche se elimina y el recorrido del líder se
@@ -125,9 +144,13 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/scenery.js` | Edificios a lo largo de las calles y arbolado en los huecos libres, en plano y en 3D. |
 | `js/trails.js` | Estelas de luz: los trazos de los coches se acumulan en un lienzo aparte y se atenúan en cada generación. |
 | `js/view3d.js` | Vista 3D realista: construye la escena de cada mapa (calles, aceras, marcas viales, casas, árboles, farolas, semáforos, puentes) y mueve en ella coches, peatones, sensores, estelas y cámara. |
+| `js/view3d-cars.js` | Modelos de coche del 3D: sedán, compacto, todoterreno y furgoneta, con las ruedas aparte para que giren. |
+| `js/view3d-fx.js` | Chispas, humo y marcas de frenada de los choques en 3D. |
+| `js/view3d-city.js` | Estilo de edificación y monumento de cada barrio real, mobiliario de las aceras y gente paseando. |
+| `js/audio.js` | Sonido sintetizado con Web Audio: motor, rodadura, lluvia, choques y aviso de récord. |
 | `vendor/three.min.js` | [three.js](https://threejs.org) r159 (licencia MIT), el motor con el que se dibuja la vista 3D. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
-| `js/sim.js` | Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
+| `js/sim.js` | El coche que conduces tú (fuera de la población). Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
 | `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |
 
 **Entradas de la red**: las 7 distancias de los sensores, más la cercanía de un
