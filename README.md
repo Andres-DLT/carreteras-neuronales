@@ -45,7 +45,9 @@ npx playwright install chromium
 npm run e2e                           # humo de la interfaz en escritorio y móvil, también por file://
 ```
 
-GitHub Actions corre las dos en cada push y en cada pull request.
+GitHub Actions corre las dos en cada push y en cada pull request. En cada push a `main`,
+si pasan, publica el juego en GitHub Pages: sin las pruebas ni los scripts, y con el
+commit como versión del service worker.
 
 ## Cómo se usa
 

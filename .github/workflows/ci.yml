@@ -1,4 +1,5 @@
 # Tests de la simulación (Node) y pruebas de humo de la interfaz (Playwright, Chromium).
+# En cada push a main, si todo pasa, publica el juego en GitHub Pages.
 name: CI
 
 on:
@@ -10,7 +11,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # En main no se cancela: una publicación a medias no debe quedarse colgada.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -35,3 +37,34 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Armar _site (solo lo que necesita el juego)
+        run: |
+          mkdir _site
+          git archive HEAD | tar -x -C _site
+          rm -rf _site/test _site/e2e _site/scripts _site/.github \
+                 _site/package.json _site/package-lock.json _site/playwright.config.js _site/.gitignore
+          # La versión del service worker es el commit: así el navegador ve que hay una nueva.
+          sed -i 's/^const VERSION = "dev";/const VERSION = "${{ github.sha }}";/' _site/sw.js
+          grep -q '^const VERSION = "${{ github.sha }}";' _site/sw.js
+          touch _site/.nojekyll
+          find _site -type f | sort
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
