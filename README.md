@@ -166,6 +166,7 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/traffic.js` | Cruces, ciclo de los semáforos, pasos de cebra, peatones, coches de tráfico y obstáculos móviles. |
 | `js/scenery.js` | Edificios a lo largo de las calles y arbolado en los huecos libres, en plano y en 3D. |
 | `js/trails.js` | Estelas de luz: los trazos de los coches se acumulan en un lienzo aparte y se atenúan en cada generación. |
+| `js/view3d-geometry.js` | Medidas de la escena 3D, altura de los puentes y ayudas para construir mallas a mano y unir geometrías. |
 | `js/view3d.js` | Vista 3D realista: construye la escena de cada mapa (calles, aceras, marcas viales, casas, árboles, farolas, semáforos, puentes) y mueve en ella coches, peatones, sensores, estelas y cámara. |
 | `js/view3d-cars.js` | Modelos de coche del 3D: sedán, compacto, todoterreno y furgoneta, con las ruedas aparte para que giren. |
 | `js/view3d-fx.js` | Chispas, humo y marcas de frenada de los choques en 3D. |
@@ -174,7 +175,14 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `vendor/three.min.js` | [three.js](https://threejs.org) r159 (licencia MIT), el motor con el que se dibuja la vista 3D. |
 | `js/worker.js` | Entrenamiento turbo: la misma simulación en un Web Worker, avisando al final de cada generación. |
 | `js/sim.js` | Los tres modos de aprendizaje y el coche que conduces tú (fuera de la población). Generaciones: elitismo (el mejor pasa intacto), mutantes del mejor con intensidad escalonada, hijos de cruzar a los 5 mejores, un 10 % de cerebros nuevos y más exploración si el récord se estanca. Con la gira todoterreno, una manga por mapa. |
-| `js/app.js` | Interfaz: editor, mapas guardados, cámara, gestos táctiles, dibujo y visualizador de la red. |
+| `js/app/state.js` | Interfaz, estado compartido: referencias al DOM, colores del tema, el mundo y la simulación, arranque y avisos. Define el objeto global `CN` con el que se comunican los scripts de `js/app/`. |
+| `js/app/training.js` | Gira todoterreno, qué aprenden, cerebro guardado por mapa, modos editar/entrenar y turbo. |
+| `js/app/draw.js` | Dibujo del plano (calles, pasos de cebra, semáforos, coches y sensores) y paso a la vista 3D. |
+| `js/app/panels.js` | Visualizador de la red, cifras, gráfica de bajas y los controles del panel. |
+| `js/app/camera-gestures.js` | Cámara, zoom y gestos: tocar, arrastrar, desplazar y pellizcar; herramientas del editor. |
+| `js/app/drive.js` | Conducir tú: teclado y botones táctiles. |
+| `js/app/maps-panel.js` | Mis mapas: guardar, abrir, exportar, importar, plantillas y barrios reales. |
+| `js/app/main.js` | Bucle principal: simula y dibuja cada fotograma; arranca la interfaz. |
 
 **Entradas de la red**: las 7 distancias de los sensores, más la cercanía de un
 semáforo en rojo y la de un obstáculo (otro coche o un peatón). Sin esas dos, un rojo se vería igual que la pared
