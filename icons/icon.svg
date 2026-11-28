@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Letrero verde de autopista con filete blanco, una carretera curva y tres nodos de red. -->
+  <rect width="512" height="512" rx="104" fill="#0a6a3b"/>
+  <rect x="30" y="30" width="452" height="452" rx="78" fill="none" stroke="#fff" stroke-width="16"/>
+  <path d="M146 420 C 158 320, 372 352, 378 214 C 381 150, 356 118, 330 92" fill="none" stroke="#fff" stroke-width="70" stroke-linecap="round"/>
+  <path d="M146 420 C 158 320, 372 352, 378 214 C 381 150, 356 118, 330 92" fill="none" stroke="#0a6a3b" stroke-width="9" stroke-linecap="round" stroke-dasharray="28 24"/>
+  <g stroke="#fff" stroke-width="11" stroke-linecap="round">
+    <line x1="136" y1="128" x2="224" y2="110"/>
+    <line x1="136" y1="128" x2="196" y2="216"/>
+    <line x1="224" y1="110" x2="196" y2="216"/>
+  </g>
+  <g fill="#0a6a3b" stroke="#fff" stroke-width="11">
+    <circle cx="136" cy="128" r="27"/>
+    <circle cx="224" cy="110" r="27"/>
+  </g>
+  <circle cx="196" cy="216" r="31" fill="#fff"/>
+</svg>

@@ -4,9 +4,13 @@
 <title>Carreteras Neuronales</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Construye un mundo virtual en JavaScript puro y llénalo de coches autónomos que aprenden a conducir por tus carreteras.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a6a3b">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Carreteras">
 <style>
   /* Layout: el mapa ocupa toda la pantalla; arriba la barra y el modo, a la derecha
      un letrero verde de autopista con las cifras, abajo la consola de mando. */
@@ -558,6 +562,27 @@
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  /* Aviso de versión nueva (service worker): se queda hasta que se recarga. */
+  .update {
+    position: absolute;
+    left: 50%;
+    top: 124px;
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 6px 6px 16px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: var(--bg);
+    font-weight: 600;
+    font-size: 13px;
+    box-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+  .update .btn { border-radius: 999px; }
+
   .short { display: none; }
 
   @media (max-width: 720px) {
@@ -584,6 +609,7 @@
     .dock { justify-items: stretch; }
     .btn, .seg button { padding: 9px 10px 7px; font-size: 12.5px; }
     .toast { top: 150px; }
+    .update { top: 198px; }
   }
   @media (max-width: 359px) {
     .brand { padding: 5px; }
@@ -755,6 +781,10 @@
               <option value="fog">Niebla</option>
             </select>
           </div>
+          <div class="field" id="install-field">
+            <button class="btn" id="install" type="button" hidden>Instalar la app</button>
+            <small id="install-help">Se puede instalar desde el menú del navegador para jugar sin conexión.</small>
+          </div>
           <div class="field">
             <button class="btn danger" id="forget">Olvidar lo aprendido</button>
             <small>Empieza otra vez con cerebros al azar.</small>
@@ -818,6 +848,10 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="update" id="update" role="status" hidden>
+    <span>Nueva versión disponible</span>
+    <button class="btn primary" id="update-reload" type="button">Recargar</button>
+  </div>
 </div>
 
 <script src="js/math.js"></script>
@@ -844,4 +878,5 @@
 <script src="js/app/camera-gestures.js"></script>
 <script src="js/app/drive.js"></script>
 <script src="js/app/maps-panel.js"></script>
+<script src="js/app/pwa.js"></script>
 <script src="js/app/main.js"></script>

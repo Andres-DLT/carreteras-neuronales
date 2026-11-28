@@ -22,6 +22,20 @@ py -m http.server 8765
 
 y abre http://localhost:8765 (con Node: `npm run serve`).
 
+## Instalar y jugar sin conexión
+
+Desde la página web se puede instalar como una app, con su ícono, y después funciona
+sin conexión: la primera visita guarda el juego entero (scripts, fuentes, íconos y
+three.js) en el navegador.
+
+- **Chrome o Edge (ordenador o Android)**: *Ajustes* → **Instalar la app**, o el menú
+  del navegador → *Instalar*.
+- **iPhone o iPad (Safari)**: botón *Compartir* → **Añadir a pantalla de inicio**.
+
+Cuando se publica una versión nueva, se descarga sola y aparece el aviso **Nueva versión
+disponible**; al tocar *Recargar* se usa la nueva. Abriendo `index.html` desde el disco
+también se juega sin conexión, pero así no se puede instalar.
+
 ## Pruebas
 
 ```bash
@@ -182,7 +196,11 @@ Los datos ya convertidos están en `js/real-maps.js`: el juego no se conecta a i
 | `js/app/camera-gestures.js` | Cámara, zoom y gestos: tocar, arrastrar, desplazar y pellizcar; herramientas del editor. |
 | `js/app/drive.js` | Conducir tú: teclado y botones táctiles. |
 | `js/app/maps-panel.js` | Mis mapas: guardar, abrir, exportar, importar, plantillas y barrios reales. |
+| `js/app/pwa.js` | App instalable: registra el service worker, avisa de las versiones nuevas y ofrece instalarla. |
 | `js/app/main.js` | Bucle principal: simula y dibuja cada fotograma; arranca la interfaz. |
+| `sw.js` | Service worker: guarda el juego al instalarse y responde desde la caché, actualizándola en segundo plano. |
+| `manifest.webmanifest`, `icons/` | Nombre, colores e íconos de la app instalada. `scripts/make-icons.mjs` genera los PNG a partir de `icons/icon.svg`. |
+| `fonts/` | Overpass y Overpass Mono (de @fontsource, licencia SIL OFL 1.1), incluidas para no depender de Google Fonts. |
 
 **Entradas de la red**: las 7 distancias de los sensores, más la cercanía de un
 semáforo en rojo y la de un obstáculo (otro coche o un peatón). Sin esas dos, un rojo se vería igual que la pared
