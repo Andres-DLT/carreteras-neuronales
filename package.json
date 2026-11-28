@@ -1,0 +1,13 @@
+{
+  "name": "carreteras-neuronales",
+  "private": true,
+  "description": "Coches autónomos que aprenden a conducir por tus calles (JavaScript clásico, sin build).",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "e2e": "playwright test",
+    "serve": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
+  }
+}

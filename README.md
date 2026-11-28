@@ -20,7 +20,18 @@ navegador. Si prefieres un servidor local:
 py -m http.server 8765
 ```
 
-y abre http://localhost:8765.
+y abre http://localhost:8765 (con Node: `npm run serve`).
+
+## Pruebas
+
+```bash
+npm ci
+npm test                              # simulación en Node: geometría, grafo, red, mapas y determinismo
+npx playwright install chromium
+npm run e2e                           # humo de la interfaz en escritorio y móvil, también por file://
+```
+
+GitHub Actions corre las dos en cada push y en cada pull request.
 
 ## Cómo se usa
 
